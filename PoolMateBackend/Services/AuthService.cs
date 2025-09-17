@@ -6,18 +6,19 @@ using PoolMate.Api.Integrations.Email;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.IdentityModel.Tokens;
 using PoolMate.Api.Dtos.Auth;
+using PoolMate.Api.Models;
 
 namespace PoolMate.Api.Services;
 
 public class AuthService
 {
-    private readonly UserManager<IdentityUser> _users;
+    private readonly UserManager<ApplicationUser> _users;
     private readonly RoleManager<IdentityRole> _roles;
     private readonly IConfiguration _cfg;
     private readonly IEmailSender _email;
 
     public AuthService(
-        UserManager<IdentityUser> users,
+        UserManager<ApplicationUser> users,
         RoleManager<IdentityRole> roles,
         IConfiguration config,
         IEmailSender emailSender)
@@ -64,7 +65,7 @@ public class AuthService
         if (await _users.FindByNameAsync(model.Username) is not null)
             return Response.Error("User already exists!");
 
-        var user = new IdentityUser { UserName = model.Username, Email = model.Email, SecurityStamp = Guid.NewGuid().ToString() };
+        var user = new ApplicationUser { UserName = model.Username, Email = model.Email, SecurityStamp = Guid.NewGuid().ToString() };
         var result = await _users.CreateAsync(user, model.Password);
         if (!result.Succeeded)
             return Response.Error(string.Join("; ", result.Errors.Select(e => e.Description)));
@@ -98,7 +99,7 @@ public class AuthService
     {
         if (await _users.FindByNameAsync(model.Username) is not null)
             return Response.Error("User already exists!");
-        var user = new IdentityUser
+        var user = new ApplicationUser
         {
             UserName = model.Username,
             Email = model.Email,
@@ -153,7 +154,7 @@ public class AuthService
 
     // ===== helper =====
 
-    private async Task SendPasswordResetEmailAsync(IdentityUser user, string baseUri, CancellationToken ct)
+    private async Task SendPasswordResetEmailAsync(ApplicationUser user, string baseUri, CancellationToken ct)
     {
         var token = await _users.GeneratePasswordResetTokenAsync(user);
         var tokenEncoded = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
@@ -164,7 +165,7 @@ public class AuthService
     }
 
 
-    private async Task SendEmailConfirmationAsync(IdentityUser u, string baseUri, CancellationToken ct)
+    private async Task SendEmailConfirmationAsync(ApplicationUser u, string baseUri, CancellationToken ct)
     {
         var token = await _users.GenerateEmailConfirmationTokenAsync(u);
         var tokenEncoded = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));

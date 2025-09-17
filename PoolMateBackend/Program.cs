@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PoolMate.Api.Data;
 using PoolMate.Api.Integrations.Email;
+using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System;
 using System.Text;
@@ -80,7 +81,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(opt =>
     opt.UseSqlServer(builder.Configuration.GetConnectionString("ConnStr")));
 
 // Identity 
-builder.Services.AddIdentity<IdentityUser, IdentityRole>(opt =>
+builder.Services.AddIdentity<ApplicationUser, IdentityRole>(opt =>
 {
     opt.User.RequireUniqueEmail = true;
     opt.Password.RequiredLength = 6;
