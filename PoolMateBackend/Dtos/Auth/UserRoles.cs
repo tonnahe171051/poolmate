@@ -1,4 +1,4 @@
-﻿namespace PoolMate.Api.Dtos
+﻿namespace PoolMate.Api.Dtos.Auth
 {
     public class UserRoles
     {

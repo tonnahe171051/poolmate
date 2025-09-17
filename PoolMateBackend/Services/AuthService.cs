@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using PoolMate.Api.Integrations.Email;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.IdentityModel.Tokens;
-using PoolMate.Api.Dtos;
+using PoolMate.Api.Dtos.Auth;
 
 namespace PoolMate.Api.Services;
 
@@ -32,9 +32,14 @@ public class AuthService
     public async Task<(string Token, DateTime Exp, string UserId, string? UserName, string? Email, IList<string> Roles)?>
         LoginAsync(LoginModel model, CancellationToken ct = default)
     {
-        var user = await _users.FindByNameAsync(model.Username);
-        if (user is null || !await _users.CheckPasswordAsync(user, model.Password))
-            return null;
+        var username = model.Username?.Trim();
+
+        var user = await _users.FindByNameAsync(username);
+        if (user is null)
+            throw new InvalidOperationException("Invalid username or password.");
+
+        if (!await _users.CheckPasswordAsync(user, model.Password))
+            throw new InvalidOperationException("Invalid username or password.");
 
         if (!user.EmailConfirmed)
             throw new InvalidOperationException("Email is not confirmed.");
@@ -54,7 +59,7 @@ public class AuthService
     }
 
     // REGISTER USER
-    public async Task<Dtos.Response> RegisterAsync(RegisterModel model, string baseUri, CancellationToken ct = default)
+    public async Task<Response> RegisterAsync(RegisterModel model, string baseUri, CancellationToken ct = default)
     {
         if (await _users.FindByNameAsync(model.Username) is not null)
             return Response.Error("User already exists!");
@@ -112,7 +117,52 @@ public class AuthService
         return Response.Ok("Admin created successfully.");
     }
 
+    // FORGOT PASSWORD - Send reset password email
+    public async Task<Response> ForgotPasswordAsync(string email, string baseUri, CancellationToken ct = default)
+    {
+        var user = await _users.FindByEmailAsync(email);
+        if (user is null)
+            return Response.Ok("If an account with that email exists, a password reset link has been sent.");
+
+        if (!user.EmailConfirmed)
+            return Response.Error("Email is not confirmed. Please confirm your email first.");
+
+        await SendPasswordResetEmailAsync(user, baseUri, ct);
+
+        return Response.Ok("If an account with that email exists, a password reset link has been sent.");
+    }
+
+    // RESET PASSWORD - Confirm password reset with token
+    public async Task<Response> ResetPasswordAsync(string userId, string token, string newPassword, CancellationToken ct = default)
+    {
+        var user = await _users.FindByIdAsync(userId);
+        if (user is null)
+            return Response.Error("User not found");
+
+        var decoded = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(token));
+        var result = await _users.ResetPasswordAsync(user, decoded, newPassword);
+
+        if (result.Succeeded)
+            return Response.Ok("Password has been reset successfully.");
+
+        var msg = string.Join("; ", result.Errors.Select(e => e.Description));
+        return Response.Error(string.IsNullOrWhiteSpace(msg) ? "Invalid or expired token." : msg);
+    }
+
+
+
     // ===== helper =====
+
+    private async Task SendPasswordResetEmailAsync(IdentityUser user, string baseUri, CancellationToken ct)
+    {
+        var token = await _users.GeneratePasswordResetTokenAsync(user);
+        var tokenEncoded = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
+        var resetUrl = $"{baseUri}/api/auth/reset-password?userId={user.Id}&token={tokenEncoded}";
+
+        await _email.SendAsync(user.Email!, "Reset your password",
+            $"Hi {user.UserName},\nTo reset your password, please click: {resetUrl}", ct);
+    }
+
 
     private async Task SendEmailConfirmationAsync(IdentityUser u, string baseUri, CancellationToken ct)
     {
