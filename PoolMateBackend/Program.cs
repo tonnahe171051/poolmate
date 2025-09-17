@@ -16,6 +16,32 @@ if (builder.Environment.IsDevelopment())
     builder.Configuration.AddUserSecrets<Program>();
 }
 
+// CORS Configuration
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("ReactPolicy", policy =>
+    {
+        policy.WithOrigins(
+                "http://localhost:3000",      // React dev server
+                "http://localhost:3001",      // Alternative React port
+                "https://localhost:3000",     // HTTPS React dev
+                "https://localhost:3001"      // HTTPS alternative
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+
+    // Policy for production (thêm domain thật khi deploy)
+    options.AddPolicy("ProductionPolicy", policy =>
+    {
+        policy.WithOrigins("https://your-production-domain.com")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+});
+
 // Controllers + Swagger
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -103,6 +129,15 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors("ReactPolicy");
+}
+else
+{
+    app.UseCors("ProductionPolicy");
+}
 
 app.UseAuthentication();   
 app.UseAuthorization();
