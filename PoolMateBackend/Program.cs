@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PoolMate.Api.Data;
 using PoolMate.Api.Integrations.Email;
+using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System;
 using System.Text;
@@ -15,6 +16,32 @@ if (builder.Environment.IsDevelopment())
 {
     builder.Configuration.AddUserSecrets<Program>();
 }
+
+// CORS Configuration
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("ReactPolicy", policy =>
+    {
+        policy.WithOrigins(
+                "http://localhost:3000",      // React dev server
+                "http://localhost:3001",      // Alternative React port
+                "https://localhost:3000",     // HTTPS React dev
+                "https://localhost:3001"      // HTTPS alternative
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+
+    // Policy for production (thêm domain thật khi deploy)
+    options.AddPolicy("ProductionPolicy", policy =>
+    {
+        policy.WithOrigins("https://your-production-domain.com")
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+});
 
 // Controllers + Swagger
 builder.Services.AddControllers();
@@ -54,7 +81,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(opt =>
     opt.UseSqlServer(builder.Configuration.GetConnectionString("ConnStr")));
 
 // Identity 
-builder.Services.AddIdentity<IdentityUser, IdentityRole>(opt =>
+builder.Services.AddIdentity<ApplicationUser, IdentityRole>(opt =>
 {
     opt.User.RequireUniqueEmail = true;
     opt.Password.RequiredLength = 6;
@@ -103,6 +130,15 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseCors("ReactPolicy");
+}
+else
+{
+    app.UseCors("ProductionPolicy");
+}
 
 app.UseAuthentication();   
 app.UseAuthorization();
