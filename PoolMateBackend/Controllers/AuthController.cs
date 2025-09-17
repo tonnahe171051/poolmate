@@ -1,6 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using PoolMate.Api.Dtos;
+using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Services;
 
 namespace PoolMate.Api.Controllers;
@@ -61,6 +61,26 @@ public class AuthController(AuthService auth) : ControllerBase
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { message = "Email is not confirmed." });
         }
+    }
+
+    [HttpPost("forgot-password")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordModel model, CancellationToken ct)
+    {
+        var baseUri = $"{Request.Scheme}://{Request.Host}";
+        var res = await auth.ForgotPasswordAsync(model.Email!, baseUri, ct);
+        return res.Status == "Success" ? Ok(res) : BadRequest(res);
+    }
+
+    [HttpPost("reset-password")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordModel model, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(model.UserId) || string.IsNullOrWhiteSpace(model.Token) || string.IsNullOrWhiteSpace(model.NewPassword))
+            return BadRequest("Missing required fields");
+
+        var res = await auth.ResetPasswordAsync(model.UserId, model.Token, model.NewPassword, ct);
+        return res.Status == "Success" ? Ok(res) : BadRequest(res);
     }
 
 }
