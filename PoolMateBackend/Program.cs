@@ -1,9 +1,11 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+﻿using CloudinaryDotNet;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PoolMate.Api.Data;
+using PoolMate.Api.Integrations.Cloudinary36;
 using PoolMate.Api.Integrations.Email;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
@@ -119,6 +121,23 @@ builder.Services.AddScoped<IEmailSender, MailKitEmailSender>();
 
 // App services
 builder.Services.AddScoped<AuthService>();
+
+// Cloudinary
+builder.Services.AddSingleton(sp =>
+{
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var acc = new Account(
+        cfg["Cloudinary:CloudName"],
+        cfg["Cloudinary:ApiKey"],
+        cfg["Cloudinary:ApiSecret"]);
+    return new Cloudinary(acc) { Api = { Secure = true } };
+});
+
+builder.Services.Configure<CloudinaryOptions>(
+    builder.Configuration.GetSection("Cloudinary"));
+
+builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
+builder.Services.AddScoped<IProfileService, ProfileService>();
 
 var app = builder.Build();
 
