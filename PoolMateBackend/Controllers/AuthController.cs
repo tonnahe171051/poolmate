@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Services;
+using System.Security.Claims;
 
 namespace PoolMate.Api.Controllers;
 
@@ -80,6 +81,22 @@ public class AuthController(AuthService auth) : ControllerBase
             return BadRequest("Missing required fields");
 
         var res = await auth.ResetPasswordAsync(model.UserId, model.Token, model.NewPassword, ct);
+        return res.Status == "Success" ? Ok(res) : BadRequest(res);
+    }
+
+    [HttpPost("change-password")]
+    [Authorize] 
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordModel model, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(model.CurrentPassword) || string.IsNullOrWhiteSpace(model.NewPassword))
+            return BadRequest("Missing required fields");
+
+        // Lấy userId từ JWT token
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized("Invalid token");
+
+        var res = await auth.ChangePasswordAsync(userId, model.CurrentPassword, model.NewPassword, ct);
         return res.Status == "Success" ? Ok(res) : BadRequest(res);
     }
 
