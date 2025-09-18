@@ -150,6 +150,27 @@ public class AuthService
         return Response.Error(string.IsNullOrWhiteSpace(msg) ? "Invalid or expired token." : msg);
     }
 
+    // CHANGE PASSWORD - User đổi mật khẩu khi đã đăng nhập
+    public async Task<Response> ChangePasswordAsync(string userId, string currentPassword, string newPassword, CancellationToken ct = default)
+    {
+        var user = await _users.FindByIdAsync(userId);
+        if (user is null)
+            return Response.Error("User not found");
+
+        // Verify current password
+        if (!await _users.CheckPasswordAsync(user, currentPassword))
+            return Response.Error("Current password is incorrect");
+
+        var result = await _users.ChangePasswordAsync(user, currentPassword, newPassword);
+        if (!result.Succeeded)
+        {
+            var errors = string.Join("; ", result.Errors.Select(e => e.Description));
+            return Response.Error(errors);
+        }
+
+        return Response.Ok("Password changed successfully");
+    }
+
 
 
     // ===== helper =====
