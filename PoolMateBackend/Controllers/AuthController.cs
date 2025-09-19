@@ -8,15 +8,15 @@ namespace PoolMate.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AuthController(AuthService auth) : ControllerBase
+public class AuthController(AuthService auth, IConfiguration config) : ControllerBase
 {
     
     [HttpPost("register")]
     [AllowAnonymous]
     public async Task<IActionResult> Register([FromBody] RegisterModel model, CancellationToken ct)
     {
-        var baseUri = $"{Request.Scheme}://{Request.Host}"; 
-        var res = await auth.RegisterAsync(model, baseUri, ct);
+        var frontendUrl = config["AppSettings:FrontendUrl"] ?? "http://localhost:3000";
+        var res = await auth.RegisterAsync(model, frontendUrl, ct);
         return res.Status == "Success" ? Ok(res) : BadRequest(res);
     }
 
@@ -68,8 +68,8 @@ public class AuthController(AuthService auth) : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordModel model, CancellationToken ct)
     {
-        var baseUri = $"{Request.Scheme}://{Request.Host}";
-        var res = await auth.ForgotPasswordAsync(model.Email!, baseUri, ct);
+        var frontendUrl = config["AppSettings:FrontendUrl"] ?? "http://localhost:3000";
+        var res = await auth.ForgotPasswordAsync(model.Email!, frontendUrl, ct);
         return res.Status == "Success" ? Ok(res) : BadRequest(res);
     }
 
