@@ -50,6 +50,35 @@ namespace PoolMate.Api.Integrations.Cloudinary36
             );
         }
 
+        // public_id cho post image: posts/{userId}/{postId}
+        public SignUploadResult SignPostImageUpload(string userId, string postId)
+        {
+            var folder = _opt.Folder ?? "posts/images";
+            var preset = _opt.UploadPreset ?? "poolmate_image";
+            var publicId = $"posts/{userId}/{postId}";
+
+            var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
+            var toSign = new SortedDictionary<string, object>
+            {
+                { "timestamp", ts },
+                { "folder", folder },
+                { "public_id", publicId },
+                { "overwrite", "true" },
+                { "upload_preset", preset }
+            };
+
+            var sig = _cloud.Api.SignParameters(toSign);
+
+            return new SignUploadResult(
+                CloudName: _cfg["Cloudinary:CloudName"]!,
+                ApiKey: _cfg["Cloudinary:ApiKey"]!,
+                Signature: sig,
+                Timestamp: ts,
+                Folder: folder,
+                PublicId: publicId,
+                UploadPreset: preset
+            );
+        }
         public async Task<bool> DeleteAsync(string publicId)
         {
             if (string.IsNullOrWhiteSpace(publicId)) return true;

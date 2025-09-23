@@ -122,6 +122,9 @@ builder.Services.AddScoped<IEmailSender, MailKitEmailSender>();
 // App services
 builder.Services.AddScoped<AuthService>();
 
+builder.Services.AddScoped<IPostService, PostService>();
+
+
 // Cloudinary
 builder.Services.AddSingleton(sp =>
 {

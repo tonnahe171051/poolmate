@@ -20,5 +20,13 @@ namespace PoolMate.Api.Controllers
             var dto = _cloud.SignAvatarUpload(userId);
             return Ok(dto);
         }
+
+        [HttpPost("sign-post-image-upload/{postId}")]
+        public IActionResult SignPostImageUpload(string postId)
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var dto = _cloud.SignPostImageUpload(userId, postId);
+            return Ok(dto);
+        }
     }
 }

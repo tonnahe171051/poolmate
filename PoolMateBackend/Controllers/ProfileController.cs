@@ -42,5 +42,13 @@ namespace PoolMate.Api.Controllers
             var res = await _profiles.UpdateAsync(userId, model, ct);
             return res.Status == "Success" ? Ok(res) : BadRequest(res);
         }
+
+        [HttpGet("user/{targetUserId}")]
+        public async Task<IActionResult> GetUserProfile(string targetUserId, CancellationToken ct)
+        {
+            var res = await _profiles.GetUserProfileAsync(targetUserId, ct);
+            return res.Status == "Success" ? Ok(res) : BadRequest(res);
+        }
+
     }
 }
