@@ -81,5 +81,25 @@ namespace PoolMate.Api.Services
             });
         }
 
+        public async Task<Response> GetUserProfileAsync(string targetUserId, CancellationToken ct)
+        {
+            var user = await _users.FindByIdAsync(targetUserId);
+            if (user is null) return Response.Error("User not found");
+
+            var dto = new
+            {
+                user.Id,
+                user.FirstName,
+                user.LastName,
+                user.Nickname,
+                user.City,
+                user.Country,
+                avatarUrl = user.ProfilePicture,
+            };
+
+            return Response.Ok(dto);
+        }
+
+
     }
 }

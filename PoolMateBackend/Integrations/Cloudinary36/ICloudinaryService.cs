@@ -8,5 +8,6 @@
     {
         SignUploadResult SignAvatarUpload(string userId);
         Task<bool> DeleteAsync(string publicId);
+        SignUploadResult SignPostImageUpload(string userId, string postId);
     }
 }
