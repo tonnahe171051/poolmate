@@ -19,9 +19,11 @@ namespace PoolMate.Api.Services
 
         public async Task<Guid?> CreatePostAsync(string userId, CreatePostModel model, CancellationToken ct)
         {
+            var postId = model.PostId ?? Guid.NewGuid();
+
             var post = new Post
             {
-                Id = Guid.NewGuid(),
+                Id = postId,
                 Content = model.Content,
                 ImageUrl = model.ImageUrl,
                 ImagePublicId = model.ImagePublicId,
@@ -42,10 +44,19 @@ namespace PoolMate.Api.Services
 
             if (model.Content != null)
                 post.Content = model.Content;
-            if (model.ImageUrl != null)
+
+            if (model.ImageUrl != null && model.ImagePublicId != null)
+            {
+                // Xóa ảnh cũ nếu có
+                if (!string.IsNullOrEmpty(post.ImagePublicId) &&
+                    post.ImagePublicId != model.ImagePublicId)
+                {
+                    await _cloud.DeleteAsync(post.ImagePublicId);
+                }
+
                 post.ImageUrl = model.ImageUrl;
-            if (model.ImagePublicId != null)
                 post.ImagePublicId = model.ImagePublicId;
+            }
 
             post.UpdatedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
