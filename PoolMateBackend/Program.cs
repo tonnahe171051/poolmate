@@ -11,6 +11,7 @@ using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System;
 using System.Text;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -46,7 +47,13 @@ builder.Services.AddCors(options =>
 });
 
 // Controllers + Swagger
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(o =>
+    {
+        o.JsonSerializerOptions.Converters.Add(
+            new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false)
+        );
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -123,6 +130,10 @@ builder.Services.AddScoped<IEmailSender, MailKitEmailSender>();
 builder.Services.AddScoped<AuthService>();
 
 builder.Services.AddScoped<IPostService, PostService>();
+
+builder.Services.AddScoped<ITournamentService, TournamentService>();
+
+builder.Services.AddScoped<IVenueService, VenueService>();
 
 
 // Cloudinary

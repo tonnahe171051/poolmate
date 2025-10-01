@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PoolMate.Api.Data;
 
@@ -11,9 +12,11 @@ using PoolMate.Api.Data;
 namespace PoolMate.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251001141706_Add_DbForStep1")]
+    partial class Add_DbForStep1
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -327,17 +330,22 @@ namespace PoolMate.Api.Data.Migrations
                     b.Property<decimal?>("AdminFee")
                         .HasColumnType("decimal(12,2)");
 
-                    b.Property<int>("BracketOrdering")
-                        .HasColumnType("int");
+                    b.Property<string>("BracketOrdering")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<int?>("BracketSizeEstimate")
                         .HasColumnType("int");
 
-                    b.Property<int>("BracketType")
-                        .HasColumnType("int");
+                    b.Property<string>("BracketType")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("nvarchar(12)");
 
-                    b.Property<int?>("BreakFormat")
-                        .HasColumnType("int");
+                    b.Property<string>("BreakFormat")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -363,8 +371,10 @@ namespace PoolMate.Api.Data.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("nvarchar(300)");
 
-                    b.Property<int>("GameType")
-                        .HasColumnType("int");
+                    b.Property<string>("GameType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
 
                     b.Property<bool>("IsPublic")
                         .HasColumnType("bit");
@@ -387,14 +397,17 @@ namespace PoolMate.Api.Data.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
 
-                    b.Property<int?>("PayoutMode")
-                        .HasColumnType("int");
+                    b.Property<string>("PayoutMode")
+                        .HasMaxLength(12)
+                        .HasColumnType("nvarchar(12)");
 
                     b.Property<int?>("PayoutTemplateId")
                         .HasColumnType("int");
 
-                    b.Property<int>("PlayerType")
-                        .HasColumnType("int");
+                    b.Property<string>("PlayerType")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("nvarchar(12)");
 
                     b.Property<string>("Rules")
                         .HasMaxLength(50)
@@ -403,8 +416,10 @@ namespace PoolMate.Api.Data.Migrations
                     b.Property<DateTime>("StartUtc")
                         .HasColumnType("datetime2");
 
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("nvarchar(12)");
 
                     b.Property<decimal?>("TotalPrize")
                         .HasColumnType("decimal(14,2)");
