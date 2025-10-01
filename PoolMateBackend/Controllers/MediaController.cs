@@ -28,5 +28,13 @@ namespace PoolMate.Api.Controllers
             var dto = _cloud.SignPostImageUpload(userId, postId);
             return Ok(dto);
         }
+
+        [HttpPost("sign-flyer-upload/{flyerId}")]
+        public IActionResult SignFlyerUpload(string flyerId)
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var dto = _cloud.SignFlyerUpload(userId, flyerId);
+            return Ok(dto);
+        }
     }
 }
