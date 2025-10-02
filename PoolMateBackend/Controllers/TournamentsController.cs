@@ -1,6 +1,8 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PoolMate.Api.Common;
 using PoolMate.Api.Dtos.Tournament;
+using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System.Security.Claims;
 
@@ -77,5 +79,20 @@ public class TournamentsController : ControllerBase
     {
         var data = await _svc.GetPayoutTemplatesAsync(ct);
         return Ok(data);
+    }
+
+    [HttpGet]
+    [AllowAnonymous]
+    public async Task<ActionResult<PagingList<TournamentListDto>>> GetTournaments(
+    [FromQuery] GameType? gameType = null,
+    [FromQuery] int pageIndex = 1,
+    [FromQuery] int pageSize = 10,
+    CancellationToken ct = default)
+    {
+        if (pageIndex < 1) pageIndex = 1;
+        if (pageSize < 1 || pageSize > 100) pageSize = 10;
+
+        var result = await _svc.GetTournamentsAsync(gameType, pageIndex, pageSize, ct);
+        return Ok(result);
     }
 }
