@@ -14,7 +14,7 @@ namespace PoolMate.Api.Common
         public static PagingList<T> Create(
             IReadOnlyList<T> items, int totalRecords, int pageIndex, int pageSize)
             => new PagingList<T>
-            {
+        {
                 Items = items,
                 TotalRecords = totalRecords,
                 PageIndex = pageIndex,
