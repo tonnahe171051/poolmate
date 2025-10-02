@@ -71,4 +71,11 @@ public class TournamentsController : ControllerBase
         return Ok(resp);
     }
 
+    [HttpGet("payout-templates")]
+    [AllowAnonymous]
+    public async Task<ActionResult<List<PayoutTemplateDto>>> GetPayoutTemplates(CancellationToken ct)
+    {
+        var data = await _svc.GetPayoutTemplatesAsync(ct);
+        return Ok(data);
+    }
 }

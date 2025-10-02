@@ -20,7 +20,7 @@ namespace PoolMate.Api.Dtos.Tournament
         public int? WinnersRaceTo { get; set; }
         public int? LosersRaceTo { get; set; }
         public int? FinalsRaceTo { get; set; }
-        public string? Rules { get; set; }
+        public Rule? Rule { get; set; }
         public BreakFormat? BreakFormat { get; set; }
         // Fee
         public decimal? EntryFee { get; set; }

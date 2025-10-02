@@ -12,5 +12,6 @@ namespace PoolMate.Api.Services
         Task<bool> EndAsync(int id, string ownerUserId, CancellationToken ct);
         Task<PayoutPreviewResponse> PreviewPayoutAsync(PreviewPayoutRequest m, CancellationToken ct);
         Task<Tournament?> GetAsync(int id, CancellationToken ct);
+        Task<List<PayoutTemplateDto>> GetPayoutTemplatesAsync(CancellationToken ct);
     }
 }
