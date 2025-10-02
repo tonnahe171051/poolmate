@@ -1,31 +1,27 @@
 
-using System.Collections.Generic;
-
 namespace PoolMate.Api.Common
 {
-    public class PagingList<T> : List<T>
+    public class PagingList<T>
     {
-        public int PageIndex { get; private set; }
-        public int TotalPages { get; private set; }
-        public int TotalRecords { get; private set; }
-        public int PageSize { get; private set; }
+        public int PageIndex { get; init; }
+        public int TotalPages { get; init; }
+        public int TotalRecords { get; init; }
+        public int PageSize { get; init; }
+        public bool HasPreviousPage { get; init; }
+        public bool HasNextPage { get; init; }
+        public IReadOnlyList<T> Items { get; init; } = Array.Empty<T>();
 
-        public bool HasPreviousPage => PageIndex > 1;
-        public bool HasNextPage => PageIndex < TotalPages;
-
-        public PagingList(List<T> items, int totalRecords, int pageIndex, int pageSize)
+        public static PagingList<T> Create(
+            IReadOnlyList<T> items, int totalRecords, int pageIndex, int pageSize)
+            => new PagingList<T>
         {
-            PageIndex = pageIndex;
-            PageSize = pageSize;
-            TotalRecords = totalRecords;
-            TotalPages = (int)Math.Ceiling(totalRecords / (double)pageSize);
-
-            AddRange(items);
-        }
-
-        public static PagingList<T> Create(List<T> source, int totalRecords, int pageIndex, int pageSize)
-        {
-            return new PagingList<T>(source, totalRecords, pageIndex, pageSize);
-        }
+                Items = items,
+                TotalRecords = totalRecords,
+                PageIndex = pageIndex,
+                PageSize = pageSize,
+                TotalPages = (int)Math.Ceiling(totalRecords / (double)pageSize),
+                HasPreviousPage = pageIndex > 1,
+                HasNextPage = pageIndex * pageSize < totalRecords
+            };
     }
 }

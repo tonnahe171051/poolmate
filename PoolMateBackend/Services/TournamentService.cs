@@ -258,27 +258,21 @@ public class TournamentService : ITournamentService
     }
 
     public async Task<PagingList<TournamentListDto>> GetTournamentsAsync(
-        GameType? gameType = null,
-        int pageIndex = 1,
-        int pageSize = 10,
-        CancellationToken ct = default)
+     GameType? gameType = null,
+     int pageIndex = 1,
+     int pageSize = 10,
+     CancellationToken ct = default)
     {
         var query = _db.Tournaments
             .Include(x => x.Venue)
-            .Where(x => x.IsPublic)
-            .AsQueryable();
+            .Where(x => x.IsPublic);
 
-        // filter by game type
         if (gameType.HasValue)
-        {
             query = query.Where(x => x.GameType == gameType.Value);
-        }
 
-        // total records
         var totalRecords = await query.CountAsync(ct);
 
-        // Paging
-        var tournaments = await query
+        var items = await query
             .OrderByDescending(x => x.StartUtc)
             .Skip((pageIndex - 1) * pageSize)
             .Take(pageSize)
@@ -293,16 +287,16 @@ public class TournamentService : ITournamentService
                 BracketSizeEstimate = x.BracketSizeEstimate,
                 WinnersRaceTo = x.WinnersRaceTo,
                 EntryFee = x.EntryFee,
-                Venue = x.Venue != null ? new VenueDto
+                Venue = x.Venue == null ? null : new VenueDto
                 {
                     Id = x.Venue.Id,
                     Name = x.Venue.Name,
                     Address = x.Venue.Address,
                     City = x.Venue.City
-                } : null
+                }
             })
             .ToListAsync(ct);
 
-        return PagingList<TournamentListDto>.Create(tournaments, totalRecords, pageIndex, pageSize);
+        return PagingList<TournamentListDto>.Create(items, totalRecords, pageIndex, pageSize);
     }
 }
