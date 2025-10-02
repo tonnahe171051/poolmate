@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using PoolMate.Api.Common;
 using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Tournament;
 using PoolMate.Api.Integrations.Cloudinary36;
@@ -254,5 +255,54 @@ public class TournamentService : ITournamentService
         }
 
         return result;
+    }
+
+    public async Task<PagingList<TournamentListDto>> GetTournamentsAsync(
+        GameType? gameType = null,
+        int pageIndex = 1,
+        int pageSize = 10,
+        CancellationToken ct = default)
+    {
+        var query = _db.Tournaments
+            .Include(x => x.Venue)
+            .Where(x => x.IsPublic)
+            .AsQueryable();
+
+        // filter by game type
+        if (gameType.HasValue)
+        {
+            query = query.Where(x => x.GameType == gameType.Value);
+        }
+
+        // total records
+        var totalRecords = await query.CountAsync(ct);
+
+        // Paging
+        var tournaments = await query
+            .OrderByDescending(x => x.StartUtc)
+            .Skip((pageIndex - 1) * pageSize)
+            .Take(pageSize)
+            .Select(x => new TournamentListDto
+            {
+                Id = x.Id,
+                Name = x.Name,
+                Description = x.Description,
+                StartUtc = x.StartUtc,
+                FlyerUrl = x.FlyerUrl,
+                GameType = x.GameType,
+                BracketSizeEstimate = x.BracketSizeEstimate,
+                WinnersRaceTo = x.WinnersRaceTo,
+                EntryFee = x.EntryFee,
+                Venue = x.Venue != null ? new VenueDto
+                {
+                    Id = x.Venue.Id,
+                    Name = x.Venue.Name,
+                    Address = x.Venue.Address,
+                    City = x.Venue.City
+                } : null
+            })
+            .ToListAsync(ct);
+
+        return PagingList<TournamentListDto>.Create(tournaments, totalRecords, pageIndex, pageSize);
     }
 }
