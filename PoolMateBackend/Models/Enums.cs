@@ -14,5 +14,8 @@
 
     // Payout mode (co cau giai thuong)
     public enum PayoutMode { Template, Custom }
+    //rules
+    public enum Rule { WNT, WPA }
+
 
 }

@@ -68,7 +68,7 @@ public class TournamentService : ITournamentService
             WinnersRaceTo = m.WinnersRaceTo,
             LosersRaceTo = m.LosersRaceTo,
             FinalsRaceTo = m.FinalsRaceTo,
-            Rules = string.IsNullOrWhiteSpace(m.Rules) ? null : m.Rules,
+            Rule = m.Rule ?? Rule.WNT,
             BreakFormat = m.BreakFormat ?? BreakFormat.WinnerBreak
         };
 
@@ -107,7 +107,7 @@ public class TournamentService : ITournamentService
         if (m.LosersRaceTo.HasValue) t.LosersRaceTo = m.LosersRaceTo.Value;
         if (m.FinalsRaceTo.HasValue) t.FinalsRaceTo = m.FinalsRaceTo.Value;
 
-        if (m.Rules != null) t.Rules = string.IsNullOrWhiteSpace(m.Rules) ? null : m.Rules;
+        if (m.Rule.HasValue) t.Rule = m.Rule.Value;
         if (m.BreakFormat.HasValue) t.BreakFormat = m.BreakFormat.Value;
 
         // ------- fees -------

@@ -56,7 +56,7 @@ namespace PoolMate.Api.Models
         public decimal? TotalPrize { get; set; }             // use when Custom
 
         // Luật & break
-        [MaxLength(50)] public string? Rules { get; set; }   // WNT, WPA, ...
+        public Rule Rule { get; set; } = Rule.WNT;   // WNT, WPA, ...
         public BreakFormat? BreakFormat { get; set; }
 
         // Runtime state cho đăng ký/lọc
