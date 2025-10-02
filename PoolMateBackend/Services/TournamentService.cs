@@ -226,4 +226,33 @@ public class TournamentService : ITournamentService
 
         return resp;
     }
+
+    public async Task<List<PayoutTemplateDto>> GetPayoutTemplatesAsync(CancellationToken ct)
+    {
+        var templates = await _db.PayoutTemplates
+            .AsNoTracking()
+            .OrderBy(x => x.MinPlayers)
+            .ThenBy(x => x.Places)
+            .Select(x => new
+            {
+                x.Id,
+                x.Name,
+                x.MinPlayers,
+                x.MaxPlayers,
+                x.Places,
+                x.PercentJson
+            })
+            .ToListAsync(ct);
+
+        var result = new List<PayoutTemplateDto>(templates.Count);
+
+        foreach (var t in templates)
+        {
+            var percents = JsonSerializer.Deserialize<List<RankPercent>>(t.PercentJson) ?? new();
+            result.Add(new PayoutTemplateDto(
+                t.Id, t.Name, t.MinPlayers, t.MaxPlayers, t.Places, percents));
+        }
+
+        return result;
+    }
 }
