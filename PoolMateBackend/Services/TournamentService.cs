@@ -68,7 +68,7 @@ public class TournamentService : ITournamentService
             WinnersRaceTo = m.WinnersRaceTo,
             LosersRaceTo = m.LosersRaceTo,
             FinalsRaceTo = m.FinalsRaceTo,
-            Rules = string.IsNullOrWhiteSpace(m.Rules) ? null : m.Rules,
+            Rule = m.Rule ?? Rule.WNT,
             BreakFormat = m.BreakFormat ?? BreakFormat.WinnerBreak
         };
 
@@ -107,7 +107,7 @@ public class TournamentService : ITournamentService
         if (m.LosersRaceTo.HasValue) t.LosersRaceTo = m.LosersRaceTo.Value;
         if (m.FinalsRaceTo.HasValue) t.FinalsRaceTo = m.FinalsRaceTo.Value;
 
-        if (m.Rules != null) t.Rules = string.IsNullOrWhiteSpace(m.Rules) ? null : m.Rules;
+        if (m.Rule.HasValue) t.Rule = m.Rule.Value;
         if (m.BreakFormat.HasValue) t.BreakFormat = m.BreakFormat.Value;
 
         // ------- fees -------
@@ -225,5 +225,34 @@ public class TournamentService : ITournamentService
         }
 
         return resp;
+    }
+
+    public async Task<List<PayoutTemplateDto>> GetPayoutTemplatesAsync(CancellationToken ct)
+    {
+        var templates = await _db.PayoutTemplates
+            .AsNoTracking()
+            .OrderBy(x => x.MinPlayers)
+            .ThenBy(x => x.Places)
+            .Select(x => new
+            {
+                x.Id,
+                x.Name,
+                x.MinPlayers,
+                x.MaxPlayers,
+                x.Places,
+                x.PercentJson
+            })
+            .ToListAsync(ct);
+
+        var result = new List<PayoutTemplateDto>(templates.Count);
+
+        foreach (var t in templates)
+        {
+            var percents = JsonSerializer.Deserialize<List<RankPercent>>(t.PercentJson) ?? new();
+            result.Add(new PayoutTemplateDto(
+                t.Id, t.Name, t.MinPlayers, t.MaxPlayers, t.Places, percents));
+        }
+
+        return result;
     }
 }
