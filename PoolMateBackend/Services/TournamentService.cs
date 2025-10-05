@@ -258,14 +258,28 @@ public class TournamentService : ITournamentService
     }
 
     public async Task<PagingList<TournamentListDto>> GetTournamentsAsync(
-     GameType? gameType = null,
-     int pageIndex = 1,
-     int pageSize = 10,
-     CancellationToken ct = default)
+         string? searchName = null,
+         TournamentStatus? status = null,
+         GameType? gameType = null,
+         int pageIndex = 1,
+         int pageSize = 10,
+         CancellationToken ct = default)
     {
         var query = _db.Tournaments
             .Include(x => x.Venue)
             .Where(x => x.IsPublic);
+
+        if (!string.IsNullOrWhiteSpace(searchName))
+        {
+            var trimmedSearch = searchName.Trim();
+            query = query.Where(x => x.Name.Contains(trimmedSearch));
+        }
+
+        // Filter by tournament status
+        if (status.HasValue)
+        {
+            query = query.Where(x => x.Status == status.Value);
+        }
 
         if (gameType.HasValue)
             query = query.Where(x => x.GameType == gameType.Value);
