@@ -66,7 +66,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("payout/preview")]
-    [AllowAnonymous] 
+    [AllowAnonymous]
     public async Task<IActionResult> PreviewPayout([FromBody] PreviewPayoutRequest model, CancellationToken ct)
     {
         var resp = await _svc.PreviewPayoutAsync(model, ct);
@@ -84,15 +84,17 @@ public class TournamentsController : ControllerBase
     [HttpGet]
     [AllowAnonymous]
     public async Task<ActionResult<PagingList<TournamentListDto>>> GetTournaments(
-    [FromQuery] GameType? gameType = null,
-    [FromQuery] int pageIndex = 1,
-    [FromQuery] int pageSize = 10,
-    CancellationToken ct = default)
+        [FromQuery] string? searchName = null,
+        [FromQuery] TournamentStatus? status = null,
+        [FromQuery] GameType? gameType = null,
+        [FromQuery] int pageIndex = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken ct = default)
     {
         if (pageIndex < 1) pageIndex = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 10;
 
-        var result = await _svc.GetTournamentsAsync(gameType, pageIndex, pageSize, ct);
+        var result = await _svc.GetTournamentsAsync(searchName, status ,gameType, pageIndex, pageSize, ct);
         return Ok(result);
     }
 }

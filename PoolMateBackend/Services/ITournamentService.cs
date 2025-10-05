@@ -15,6 +15,8 @@ namespace PoolMate.Api.Services
         Task<Tournament?> GetAsync(int id, CancellationToken ct);
         Task<List<PayoutTemplateDto>> GetPayoutTemplatesAsync(CancellationToken ct);
         Task<PagingList<TournamentListDto>> GetTournamentsAsync(
+        string? searchName = null,
+        TournamentStatus? status = null,
         GameType? gameType = null,
         int pageIndex = 1,
         int pageSize = 10,
