@@ -11,6 +11,7 @@ namespace PoolMate.Api.Dtos.Tournament
         public DateTime StartUtc { get; set; }
         public string? FlyerUrl { get; set; }
         public GameType GameType { get; set; }
+        public TournamentStatus Status { get; set; }
         public int? BracketSizeEstimate { get; set; }
         public int? WinnersRaceTo { get; set; }
         public decimal? EntryFee { get; set; }
