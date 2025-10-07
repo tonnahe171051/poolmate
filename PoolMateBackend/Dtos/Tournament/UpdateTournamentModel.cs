@@ -1,5 +1,6 @@
 ﻿
 using PoolMate.Api.Models;
+using System.ComponentModel.DataAnnotations;
 
 namespace PoolMate.Api.Dtos.Tournament
 {
@@ -12,6 +13,8 @@ namespace PoolMate.Api.Dtos.Tournament
         public int? VenueId { get; set; }
         public bool? IsPublic { get; set; }
         public bool? OnlineRegistrationEnabled { get; set; }
+        [Required]
+        [Range(2, 256, ErrorMessage = "Bracket size must be between 2 and 256 players")]
         public int? BracketSizeEstimate { get; set; }
         public PlayerType? PlayerType { get; set; }
         public BracketType? BracketType { get; set; }

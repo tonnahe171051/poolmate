@@ -37,6 +37,27 @@ public class TournamentService : ITournamentService
         t.TotalPrize = ComputeTotal(players, t.EntryFee, t.AdminFee, t.AddedMoney);
     }
 
+    private async Task<(bool CanAdd, int CurrentCount, int? MaxLimit)> CanAddPlayersAsync(
+        int tournamentId, int playersToAdd, CancellationToken ct)
+    {
+        var tournament = await _db.Tournaments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+
+        if (tournament?.BracketSizeEstimate == null)
+        {
+            return (true, 0, null);
+        }
+
+        var currentCount = await _db.TournamentPlayers
+            .CountAsync(x => x.TournamentId == tournamentId, ct);
+
+        var maxLimit = tournament.BracketSizeEstimate ?? 256; 
+        var canAdd = (currentCount + playersToAdd) <= maxLimit;
+
+        return (canAdd, currentCount, maxLimit);
+    }
+
     public async Task<int?> CreateAsync(string ownerUserId, CreateTournamentModel m, CancellationToken ct)
     {
         var t = new Tournament
@@ -313,4 +334,274 @@ public class TournamentService : ITournamentService
 
         return PagingList<TournamentListDto>.Create(items, totalRecords, pageIndex, pageSize);
     }
+
+    public async Task<TournamentPlayer?> AddTournamentPlayerAsync(
+        int tournamentId, string ownerUserId, AddTournamentPlayerModel m, CancellationToken ct)
+    {
+        var t = await _db.Tournaments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+        if (t is null || t.OwnerUserId != ownerUserId) return null;
+
+        var (canAdd, currentCount, maxLimit) = await CanAddPlayersAsync(tournamentId, 1, ct);
+        if (!canAdd)
+        {
+            throw new InvalidOperationException(
+                $"Cannot add player. Tournament is full ({currentCount}/{maxLimit}).");
+        }
+
+        if (m.PlayerId.HasValue)
+        {
+            var exists = await _db.TournamentPlayers
+                .AnyAsync(x => x.TournamentId == tournamentId && x.PlayerId == m.PlayerId, ct);
+            if (exists) throw new InvalidOperationException("This player is already in the tournament.");
+        }
+
+        var tp = new TournamentPlayer
+        {
+            TournamentId = tournamentId,
+            PlayerId = m.PlayerId,                     
+            DisplayName = m.DisplayName.Trim(),
+            Nickname = m.Nickname,
+            Email = m.Email,
+            Phone = m.Phone,
+            City = m.City,
+            Country = m.Country,                       
+            SkillLevel = m.SkillLevel,
+            Seed = m.Seed,
+            Status = TournamentPlayerStatus.Confirmed
+        };
+
+        _db.TournamentPlayers.Add(tp);
+        await _db.SaveChangesAsync(ct);
+        return tp;
+    }
+
+    public async Task<BulkAddPlayersResult> BulkAddPlayersPerLineAsync(
+        int tournamentId,
+        string ownerUserId,
+        AddTournamentPlayersPerLineModel m,
+        CancellationToken ct)
+    {
+        var t = await _db.Tournaments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+
+        if (t is null) throw new InvalidOperationException("Tournament not found.");
+        if (t.OwnerUserId != ownerUserId) throw new UnauthorizedAccessException();
+
+        var lines = (m.Lines ?? string.Empty)
+            .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+            .Select(x => x.Trim())
+            .ToList();
+
+        var result = new BulkAddPlayersResult();
+        if (lines.Count == 0) return result;
+
+        var (canAdd, currentCount, maxLimit) = await CanAddPlayersAsync(tournamentId, lines.Count, ct);
+        if (!canAdd)
+        {
+            var availableSlots = maxLimit.HasValue ? Math.Max(0, maxLimit.Value - currentCount) : lines.Count;
+            throw new InvalidOperationException(
+                $"Cannot add {lines.Count} players. Tournament has {availableSlots} available slots ({currentCount}/{maxLimit}).");
+        }
+
+        var toAdd = new List<TournamentPlayer>(capacity: lines.Count);
+        var defaultStatus = TournamentPlayerStatus.Confirmed;
+
+        foreach (var raw in lines)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                result.Skipped.Add(new BulkAddPlayersResult.SkippedItem
+                {
+                    Line = raw,
+                    Reason = "Empty line"
+                });
+                continue;
+            }
+
+            var name = raw.Trim();
+            if (name.Length > 200)  
+            {
+                name = name.Substring(0, 200);
+            }
+
+            toAdd.Add(new TournamentPlayer
+            {
+                TournamentId = tournamentId,
+                DisplayName = name,
+                Status = defaultStatus,
+            });
+        }
+
+        if (toAdd.Count == 0) return result;
+
+        _db.TournamentPlayers.AddRange(toAdd);
+        await _db.SaveChangesAsync(ct);
+
+        // result
+        result.AddedCount = toAdd.Count;
+        result.Added = toAdd
+            .Select(x => new BulkAddPlayersResult.Item
+            {
+                Id = x.Id,
+                DisplayName = x.DisplayName
+            })
+            .ToList();
+
+        return result;
+    }
+
+    public async Task<List<PlayerSearchItemDto>> SearchPlayersAsync(string q, int limit, CancellationToken ct)
+    {
+        q = (q ?? string.Empty).Trim();
+        if (limit <= 0 || limit > 50) limit = 10;
+
+        var query = _db.Set<Player>().AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            var qLower = q.ToLower();
+            query = query.Where(p =>
+                p.FullName.ToLower().Contains(qLower)); 
+        }
+
+        var items = await query
+            .OrderBy(p => p.FullName)
+            .Take(limit)
+            .Select(p => new PlayerSearchItemDto
+            {
+                Id = p.Id,
+                FullName = p.FullName,
+                Email = p.Email,
+                Phone = p.Phone,
+                Country = p.Country,
+                City = p.City,
+                SkillLevel = p.SkillLevel
+            })
+            .ToListAsync(ct);
+
+        return items;
+    }
+
+    public async Task<bool> LinkTournamentPlayerAsync(
+        int tournamentId, int tpId, string ownerUserId,
+        LinkPlayerRequest m, CancellationToken ct)
+    {
+        var t = await _db.Tournaments.FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+        if (t is null || t.OwnerUserId != ownerUserId) return false;
+
+        var tp = await _db.TournamentPlayers.FirstOrDefaultAsync(x => x.Id == tpId && x.TournamentId == tournamentId, ct);
+        if (tp is null) return false;
+
+        var player = await _db.Set<Player>().AsNoTracking().FirstOrDefaultAsync(x => x.Id == m.PlayerId, ct);
+        if (player is null) return false;
+
+        tp.PlayerId = player.Id;
+
+        if (m.OverwriteSnapshot)
+        {
+            tp.DisplayName = player.FullName;
+            tp.Email = player.Email;
+            tp.Phone = player.Phone;
+            tp.Country = player.Country;
+            tp.City = player.City;
+            tp.SkillLevel = player.SkillLevel;
+        }
+
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<bool> UnlinkTournamentPlayerAsync(
+        int tournamentId, int tpId, string ownerUserId, CancellationToken ct)
+    {
+        var t = await _db.Tournaments.FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+        if (t is null || t.OwnerUserId != ownerUserId) return false;
+
+        var tp = await _db.TournamentPlayers.FirstOrDefaultAsync(x => x.Id == tpId && x.TournamentId == tournamentId, ct);
+        if (tp is null) return false;
+
+        tp.PlayerId = null;
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    //create + link
+    public async Task<int?> CreateProfileFromSnapshotAndLinkAsync(
+        int tournamentId, int tpId, string ownerUserId,
+        CreateProfileFromSnapshotRequest m, CancellationToken ct)
+    {
+        var t = await _db.Tournaments.FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+        if (t is null || t.OwnerUserId != ownerUserId) return null;
+
+        var tp = await _db.TournamentPlayers.FirstOrDefaultAsync(x => x.Id == tpId && x.TournamentId == tournamentId, ct);
+        if (tp is null) return null;
+
+        // tạo Player mới từ snapshot
+        var p = new Player
+        {
+            FullName = tp.DisplayName,
+            Email = tp.Email,
+            Phone = tp.Phone,
+            Country = tp.Country,
+            City = tp.City,
+            SkillLevel = tp.SkillLevel
+        };
+
+        _db.Set<Player>().Add(p);
+        await _db.SaveChangesAsync(ct); 
+
+        tp.PlayerId = p.Id;
+
+        if (m.CopyBackToSnapshot)
+        {
+            tp.DisplayName = p.FullName;
+            tp.Email = p.Email;
+            tp.Phone = p.Phone;
+            tp.Country = p.Country;
+            tp.City = p.City;
+            tp.SkillLevel = p.SkillLevel;
+        }
+
+        await _db.SaveChangesAsync(ct);
+        return p.Id;
+    }
+
+    public async Task<List<TournamentPlayerListDto>> GetTournamentPlayersAsync(
+    int tournamentId,
+    string? searchName = null,
+    CancellationToken ct = default)
+    {
+        var query = _db.TournamentPlayers
+            .AsNoTracking()
+            .Where(x => x.TournamentId == tournamentId);
+
+        if (!string.IsNullOrWhiteSpace(searchName))
+        {
+            var trimmedSearch = searchName.Trim().ToLower();
+            query = query.Where(x => x.DisplayName.ToLower().Contains(trimmedSearch));
+        }
+
+        var items = await query
+            .OrderBy(x => x.Seed ?? int.MaxValue) 
+            .ThenBy(x => x.DisplayName)
+            .Select(x => new TournamentPlayerListDto
+            {
+                Id = x.Id,
+                DisplayName = x.DisplayName,
+                Email = x.Email,
+                Phone = x.Phone,
+                Country = x.Country,
+                Seed = x.Seed,
+                SkillLevel = x.SkillLevel,
+                Status = x.Status,
+                PlayerId = x.PlayerId
+            })
+            .ToListAsync(ct);
+
+        return items;
+    }
+
 }
