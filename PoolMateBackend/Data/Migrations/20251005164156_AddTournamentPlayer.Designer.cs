@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PoolMate.Api.Data;
 
@@ -11,9 +12,11 @@ using PoolMate.Api.Data;
 namespace PoolMate.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251005164156_AddTournamentPlayer")]
+    partial class AddTournamentPlayer
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -286,8 +289,7 @@ namespace PoolMate.Api.Data.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Country")
-                        .HasMaxLength(2)
-                        .HasColumnType("nvarchar(2)");
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -306,8 +308,8 @@ namespace PoolMate.Api.Data.Migrations
                     b.Property<string>("Phone")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<int?>("SkillLevel")
-                        .HasColumnType("int");
+                    b.Property<string>("SkillLevel")
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("UserId")
                         .HasColumnType("nvarchar(450)");
@@ -489,34 +491,14 @@ namespace PoolMate.Api.Data.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("City")
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<string>("Note")
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
 
-                    b.Property<string>("Country")
-                        .HasMaxLength(2)
-                        .HasColumnType("nvarchar(2)");
-
-                    b.Property<string>("DisplayName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("Email")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Nickname")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Phone")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int?>("PlayerId")
+                    b.Property<int>("PlayerId")
                         .HasColumnType("int");
 
                     b.Property<int?>("Seed")
-                        .HasColumnType("int");
-
-                    b.Property<int?>("SkillLevel")
                         .HasColumnType("int");
 
                     b.Property<string>("Status")
@@ -531,15 +513,8 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("PlayerId");
 
-                    b.HasIndex("TournamentId");
-
                     b.HasIndex("TournamentId", "PlayerId")
-                        .IsUnique()
-                        .HasFilter("[PlayerId] IS NOT NULL");
-
-                    b.HasIndex("TournamentId", "Seed");
-
-                    b.HasIndex("TournamentId", "Status");
+                        .IsUnique();
 
                     b.ToTable("TournamentPlayers");
                 });
@@ -688,7 +663,8 @@ namespace PoolMate.Api.Data.Migrations
                     b.HasOne("PoolMate.Api.Models.Player", "Player")
                         .WithMany("TournamentPlayers")
                         .HasForeignKey("PlayerId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
 
                     b.HasOne("PoolMate.Api.Models.Tournament", "Tournament")
                         .WithMany("TournamentPlayers")

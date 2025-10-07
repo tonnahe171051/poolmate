@@ -5,6 +5,7 @@ using PoolMate.Api.Dtos.Tournament;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System.Security.Claims;
+using System.Text.RegularExpressions;
 
 namespace PoolMate.Api.Controllers;
 
@@ -94,7 +95,94 @@ public class TournamentsController : ControllerBase
         if (pageIndex < 1) pageIndex = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 10;
 
-        var result = await _svc.GetTournamentsAsync(searchName, status ,gameType, pageIndex, pageSize, ct);
+        var result = await _svc.GetTournamentsAsync(searchName, status, gameType, pageIndex, pageSize, ct);
         return Ok(result);
     }
+
+    [HttpPost("{id}/players")]
+    public async Task<IActionResult> AddPlayer(
+        int id,
+        [FromBody] AddTournamentPlayerModel model,
+        CancellationToken ct)
+    {
+        if (model.Phone != null && model.Phone != "")
+        {
+            if (model.Phone.Trim().Length == 0)
+                return BadRequest(new { message = "Phone number cannot be only whitespace." });
+
+            var phone = model.Phone.Trim();
+            if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
+                return BadRequest(new { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+
+            model.Phone = phone;
+        }
+
+        //validation from data annotations
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+        var tp = await _svc.AddTournamentPlayerAsync(id, userId, model, ct);
+        if (tp is null) return NotFound(new { message = "Tournament not found or not owned by you." });
+
+        return Ok(new { id = tp.Id });
+    }
+
+    [HttpPost("{id}/players/bulk-lines")]
+    public async Task<IActionResult> BulkAddPlayersPerLine(
+    int id,
+    [FromBody] AddTournamentPlayersPerLineModel model,
+    CancellationToken ct)
+    {
+        var ownerUserId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var resp = await _svc.BulkAddPlayersPerLineAsync(id, ownerUserId, model, ct);
+        return Ok(resp);
+    }
+
+    [HttpGet("players/search")]
+    public async Task<IActionResult> SearchPlayers([FromQuery] string q, [FromQuery] int limit = 10, CancellationToken ct = default)
+    {
+        var items = await _svc.SearchPlayersAsync(q, limit, ct);
+        return Ok(items);
+    }
+
+    [HttpPost("{tournamentId}/players/{tpId}/link")]
+    public async Task<IActionResult> LinkPlayer(int tournamentId, int tpId, [FromBody] LinkPlayerRequest m, CancellationToken ct)
+    {
+        var uid = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var ok = await _svc.LinkTournamentPlayerAsync(tournamentId, tpId, uid, m, ct);
+        if (!ok) return BadRequest(new { message = "Link failed." });
+        return Ok(new { message = "Linked." });
+    }
+
+    [HttpPost("{tournamentId}/players/{tpId}/unlink")]
+    public async Task<IActionResult> UnlinkPlayer(int tournamentId, int tpId, CancellationToken ct)
+    {
+        var uid = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var ok = await _svc.UnlinkTournamentPlayerAsync(tournamentId, tpId, uid, ct);
+        if (!ok) return BadRequest(new { message = "Unlink failed." });
+        return Ok(new { message = "Unlinked." });
+    }
+
+    [HttpPost("{tournamentId}/players/{tpId}/create-profile")]
+    public async Task<IActionResult> CreateProfileFromSnapshot(int tournamentId, int tpId,
+        [FromBody] CreateProfileFromSnapshotRequest m, CancellationToken ct)
+    {
+        var uid = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var playerId = await _svc.CreateProfileFromSnapshotAndLinkAsync(tournamentId, tpId, uid, m, ct);
+        if (playerId is null) return BadRequest(new { message = "Create profile failed." });
+        return Ok(new { playerId });
+    }
+
+    [HttpGet("{id}/players")]
+    public async Task<ActionResult<List<TournamentPlayerListDto>>> GetTournamentPlayers(
+    int id,
+    [FromQuery] string? searchName = null,
+    CancellationToken ct = default)
+    {
+        var players = await _svc.GetTournamentPlayersAsync(id, searchName, ct);
+        return Ok(players);
+    }
+
 }
