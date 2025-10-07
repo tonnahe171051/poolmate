@@ -19,6 +19,8 @@ public class CreateTournamentModel
     // Hiển thị & đăng ký
     public bool IsPublic { get; set; } = false;
     public bool OnlineRegistrationEnabled { get; set; } = false;
+    [Required]
+    [Range(2, 256, ErrorMessage = "Bracket size must be between 2 and 256 players")]
     public int? BracketSizeEstimate { get; set; }
 
     // Settings

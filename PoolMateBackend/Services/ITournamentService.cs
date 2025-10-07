@@ -21,5 +21,28 @@ namespace PoolMate.Api.Services
         int pageIndex = 1,
         int pageSize = 10,
         CancellationToken ct = default);
+        Task<TournamentPlayer?> AddTournamentPlayerAsync(
+        int tournamentId, string ownerUserId, AddTournamentPlayerModel m, CancellationToken ct);
+        Task<BulkAddPlayersResult> BulkAddPlayersPerLineAsync(
+        int tournamentId,
+        string ownerUserId,
+        AddTournamentPlayersPerLineModel m,
+        CancellationToken ct);
+        Task<List<PlayerSearchItemDto>> SearchPlayersAsync(string q, int limit, CancellationToken ct);
+
+        Task<bool> LinkTournamentPlayerAsync(int tournamentId, int tpId, string ownerUserId,
+            LinkPlayerRequest m, CancellationToken ct);
+
+        Task<bool> UnlinkTournamentPlayerAsync(int tournamentId, int tpId, string ownerUserId,
+            CancellationToken ct);
+
+        Task<int?> CreateProfileFromSnapshotAndLinkAsync(int tournamentId, int tpId, string ownerUserId,
+            CreateProfileFromSnapshotRequest m, CancellationToken ct);
+        Task<List<TournamentPlayerListDto>> GetTournamentPlayersAsync(
+        int tournamentId,
+        string? searchName = null,
+        CancellationToken ct = default);
+
+
     }
 }

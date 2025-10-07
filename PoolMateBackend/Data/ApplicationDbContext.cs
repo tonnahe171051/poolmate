@@ -14,6 +14,8 @@ namespace PoolMate.Api.Data
         public DbSet<Venue> Venues => Set<Venue>();
         public DbSet<Tournament> Tournaments => Set<Tournament>();
         public DbSet<PayoutTemplate> PayoutTemplates => Set<PayoutTemplate>();
+        public DbSet<Player> Players => Set<Player>();
+        public DbSet<TournamentPlayer> TournamentPlayers => Set<TournamentPlayer>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -81,6 +83,39 @@ namespace PoolMate.Api.Data
              .WithMany(vn => vn.Tournaments)
              .HasForeignKey(x => x.VenueId)
              .OnDelete(DeleteBehavior.SetNull);
+
+            // Player
+            var pl = builder.Entity<Player>();
+            pl.Property(x => x.Country).HasMaxLength(2);
+            pl.HasIndex(x => x.FullName);
+            pl.HasOne(x => x.User)
+              .WithMany()
+              .HasForeignKey(x => x.UserId)
+              .OnDelete(DeleteBehavior.NoAction);
+
+            // TournamentPlayer
+            var tp = builder.Entity<TournamentPlayer>();
+            tp.Property(x => x.Status).HasConversion<string>().HasMaxLength(16);
+            tp.Property(x => x.Country).HasMaxLength(2);
+            tp.HasOne(tp => tp.Tournament)
+                .WithMany(t => t.TournamentPlayers)
+                .HasForeignKey(tp => tp.TournamentId)
+                .OnDelete(DeleteBehavior.Cascade);
+            tp.HasOne(tp => tp.Player)
+                .WithMany(p => p.TournamentPlayers)
+                .HasForeignKey(tp => tp.PlayerId)
+                .OnDelete(DeleteBehavior.SetNull);
+            tp.HasIndex(x => new {x.TournamentId, x.PlayerId})
+                .IsUnique()
+                .HasFilter("[PlayerId] IS NOT NULL");
+            tp.Property(x => x.DisplayName).IsRequired().HasMaxLength(200);
+
+            //index for faster search
+            tp.HasIndex(x => x.TournamentId);                         
+            tp.HasIndex(x => new { x.TournamentId, x.Status });       
+            tp.HasIndex(x => new { x.TournamentId, x.Seed });         
+
+
         }
 
         // Update UpdatedAt cho Tournament
