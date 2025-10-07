@@ -67,7 +67,7 @@ namespace PoolMate.Api.Models
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
         //// Navigations khác (để bạn thêm dần)
-        //public ICollection<TournamentPlayer> TournamentPlayers { get; set; } = new();
+        public ICollection<TournamentPlayer> TournamentPlayers { get; set; } = new List<TournamentPlayer>();
         //public ICollection<TournamentTable> Tables { get; set; } = new();
         //public ICollection<Match> Matches { get; set; } = new();
     }

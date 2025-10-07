@@ -17,5 +17,7 @@
     //rules
     public enum Rule { WNT, WPA }
 
+    public enum TournamentPlayerStatus { Unconfirmed, Confirmed }
+
 
 }
