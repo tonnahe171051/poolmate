@@ -19,5 +19,7 @@
 
     public enum TournamentPlayerStatus { Unconfirmed, Confirmed }
 
+    public enum TableStatus { Open, InUse, Closed }
+
 
 }
