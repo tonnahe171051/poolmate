@@ -68,7 +68,7 @@ namespace PoolMate.Api.Models
 
         //// Navigations khác (để bạn thêm dần)
         public ICollection<TournamentPlayer> TournamentPlayers { get; set; } = new List<TournamentPlayer>();
-        //public ICollection<TournamentTable> Tables { get; set; } = new();
+        public ICollection<TournamentTable> Tables { get; set; } = new List<TournamentTable>();
         //public ICollection<Match> Matches { get; set; } = new();
     }
 }

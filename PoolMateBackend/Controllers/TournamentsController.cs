@@ -185,4 +185,178 @@ public class TournamentsController : ControllerBase
         return Ok(players);
     }
 
+    [HttpPut("{tournamentId}/players/{tpId}")]
+    public async Task<IActionResult> UpdateTournamentPlayer(
+    int tournamentId,
+    int tpId,
+    [FromBody] UpdateTournamentPlayerModel model,
+    CancellationToken ct)
+    {
+        if (model.Phone != null && model.Phone != "")
+        {
+            if (model.Phone.Trim().Length == 0)
+                return BadRequest(new { message = "Phone number cannot be only whitespace." });
+
+            var phone = model.Phone.Trim();
+            if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
+                return BadRequest(new { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+
+            model.Phone = phone;
+        }
+
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var success = await _svc.UpdateTournamentPlayerAsync(tournamentId, tpId, userId, model, ct);
+
+        if (!success)
+            return NotFound(new { message = "Tournament player not found or you don't have permission." });
+
+        return Ok(new { message = "Tournament player updated successfully." });
+    }
+
+    [HttpPost("{id}/tables")]
+    public async Task<IActionResult> AddTable(
+        int id,
+        [FromBody] AddTournamentTableModel model,
+        CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+        var table = await _svc.AddTournamentTableAsync(id, userId, model, ct);
+        if (table is null)
+            return NotFound(new { message = "Tournament not found or not owned by you." });
+
+        return Ok(new
+        {
+            id = table.Id,
+            label = table.Label,
+            message = "Table added successfully."
+        });
+    }
+
+    [HttpPost("{id}/tables/bulk")]
+    public async Task<IActionResult> AddMultipleTables(
+    int id,
+    [FromBody] AddMultipleTournamentTablesModel model,
+    CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        if (model.EndNumber < model.StartNumber)
+            return BadRequest(new { message = "End number must be greater than or equal to start number." });
+
+        var tableCount = model.EndNumber - model.StartNumber + 1;
+        if (tableCount > 50)
+            return BadRequest(new { message = "Cannot add more than 50 tables at once." });
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+        var result = await _svc.AddMultipleTournamentTablesAsync(id, userId, model, ct);
+        if (result is null)
+            return NotFound(new { message = "Tournament not found or not owned by you." });
+
+        return Ok(new
+        {
+            addedCount = result.AddedCount,
+            tables = result.Added,
+            message = $"Successfully added {result.AddedCount} tables."
+        });
+    }
+
+    [HttpPut("{tournamentId}/tables/{tableId}")]
+    public async Task<IActionResult> UpdateTable(
+        int tournamentId,
+        int tableId,
+        [FromBody] UpdateTournamentTableModel model,
+        CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+        var success = await _svc.UpdateTournamentTableAsync(tournamentId, tableId, userId, model, ct);
+        if (!success)
+            return NotFound(new { message = "Table not found or tournament not owned by you." });
+
+        return Ok(new
+        {
+            tableId,
+            message = "Table updated successfully."
+        });
+    }
+
+    // Thêm vào TournamentsController.cs
+
+    [HttpDelete("{tournamentId}/tables")]
+    public async Task<IActionResult> DeleteTables(
+        int tournamentId,
+        [FromBody] DeleteTablesModel model,
+        CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+        var result = await _svc.DeleteTournamentTablesAsync(tournamentId, userId, model, ct);
+        if (result is null)
+            return NotFound(new { message = "Tournament not found or not owned by you." });
+
+        return Ok(new
+        {
+            deletedCount = result.DeletedCount,
+            deletedIds = result.DeletedIds,
+            failed = result.Failed,
+            message = $"Successfully deleted {result.DeletedCount} table(s)."
+        });
+    }
+
+    [HttpGet("{id}/tables")]
+    public async Task<ActionResult<List<TournamentTableDto>>> GetTournamentTables(
+        int id,
+        CancellationToken ct = default)
+    {
+        var tables = await _svc.GetTournamentTablesAsync(id, ct);
+        return Ok(tables);
+    }
+
+    [HttpDelete("{tournamentId}/players")]
+    public async Task<IActionResult> DeletePlayers(
+        int tournamentId,
+        [FromBody] DeletePlayersModel model,
+        CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+        var result = await _svc.DeleteTournamentPlayersAsync(tournamentId, userId, model, ct);
+        if (result is null)
+            return NotFound(new { message = "Tournament not found or not owned by you." });
+
+        return Ok(new
+        {
+            deletedCount = result.DeletedCount,
+            deletedIds = result.DeletedIds,
+            failed = result.Failed,
+            message = $"Successfully deleted {result.DeletedCount} player(s)."
+        });
+    }
+
+
+
+
+
+
+
+
+
 }

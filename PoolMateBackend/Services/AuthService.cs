@@ -10,7 +10,7 @@ using PoolMate.Api.Models;
 
 namespace PoolMate.Api.Services;
 
-public class AuthService
+public class AuthService : IAuthService
 {
     private readonly UserManager<ApplicationUser> _users;
     private readonly RoleManager<IdentityRole> _roles;

@@ -135,6 +135,9 @@ builder.Services.AddScoped<ITournamentService, TournamentService>();
 
 builder.Services.AddScoped<IVenueService, VenueService>();
 
+builder.Services.AddScoped<IAuthService, AuthService>();
+
+
 
 // Cloudinary
 builder.Services.AddSingleton(sp =>
