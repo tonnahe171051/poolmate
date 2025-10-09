@@ -52,7 +52,7 @@ public class TournamentService : ITournamentService
         var currentCount = await _db.TournamentPlayers
             .CountAsync(x => x.TournamentId == tournamentId, ct);
 
-        var maxLimit = tournament.BracketSizeEstimate ?? 256; 
+        var maxLimit = tournament.BracketSizeEstimate ?? 256;
         var canAdd = (currentCount + playersToAdd) <= maxLimit;
 
         return (canAdd, currentCount, maxLimit);
@@ -360,13 +360,13 @@ public class TournamentService : ITournamentService
         var tp = new TournamentPlayer
         {
             TournamentId = tournamentId,
-            PlayerId = m.PlayerId,                     
+            PlayerId = m.PlayerId,
             DisplayName = m.DisplayName.Trim(),
             Nickname = m.Nickname,
             Email = m.Email,
             Phone = m.Phone,
             City = m.City,
-            Country = m.Country,                       
+            Country = m.Country,
             SkillLevel = m.SkillLevel,
             Seed = m.Seed,
             Status = TournamentPlayerStatus.Confirmed
@@ -422,7 +422,7 @@ public class TournamentService : ITournamentService
             }
 
             var name = raw.Trim();
-            if (name.Length > 200)  
+            if (name.Length > 200)
             {
                 name = name.Substring(0, 200);
             }
@@ -464,7 +464,7 @@ public class TournamentService : ITournamentService
         {
             var qLower = q.ToLower();
             query = query.Where(p =>
-                p.FullName.ToLower().Contains(qLower)); 
+                p.FullName.ToLower().Contains(qLower));
         }
 
         var items = await query
@@ -551,7 +551,7 @@ public class TournamentService : ITournamentService
         };
 
         _db.Set<Player>().Add(p);
-        await _db.SaveChangesAsync(ct); 
+        await _db.SaveChangesAsync(ct);
 
         tp.PlayerId = p.Id;
 
@@ -585,7 +585,7 @@ public class TournamentService : ITournamentService
         }
 
         var items = await query
-            .OrderBy(x => x.Seed ?? int.MaxValue) 
+            .OrderBy(x => x.Seed ?? int.MaxValue)
             .ThenBy(x => x.DisplayName)
             .Select(x => new TournamentPlayerListDto
             {
@@ -603,5 +603,264 @@ public class TournamentService : ITournamentService
 
         return items;
     }
+
+    public async Task<bool> UpdateTournamentPlayerAsync(
+    int tournamentId,
+    int tpId,
+    string ownerUserId,
+    UpdateTournamentPlayerModel m,
+    CancellationToken ct)
+    {
+        var t = await _db.Tournaments.FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+        if (t is null || t.OwnerUserId != ownerUserId) return false;
+
+        var tp = await _db.TournamentPlayers
+            .FirstOrDefaultAsync(x => x.Id == tpId && x.TournamentId == tournamentId, ct);
+        if (tp is null) return false;
+
+        //update fields
+        if (!string.IsNullOrWhiteSpace(m.DisplayName))
+            tp.DisplayName = m.DisplayName.Trim();
+
+        if (m.Nickname != null)
+            tp.Nickname = m.Nickname.Trim();
+
+        if (m.Email != null)
+            tp.Email = m.Email.Trim();
+
+        if (m.Phone != null)
+            tp.Phone = m.Phone.Trim();
+
+        if (m.Country != null)
+            tp.Country = m.Country.Trim();
+
+        if (m.City != null)
+            tp.City = m.City.Trim();
+
+        tp.SkillLevel = m.SkillLevel;
+
+        tp.Seed = m.Seed;
+
+        if (m.Status.HasValue)
+            tp.Status = m.Status.Value;
+
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<TournamentTable?> AddTournamentTableAsync(
+        int tournamentId, string ownerUserId, AddTournamentTableModel m, CancellationToken ct)
+    {
+        var t = await _db.Tournaments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+        if (t is null || t.OwnerUserId != ownerUserId) return null;
+
+        var table = new TournamentTable
+        {
+            TournamentId = tournamentId,
+            Label = m.Label.Trim(),
+            Manufacturer = m.Manufacturer?.Trim(),
+            SizeFoot = m.SizeFoot,
+            LiveStreamUrl = m.LiveStreamUrl?.Trim(),
+            Status = TableStatus.Open,
+            IsStreaming = false
+        };
+
+        _db.TournamentTables.Add(table);
+        await _db.SaveChangesAsync(ct);
+        return table;
+    }
+
+    public async Task<BulkAddTablesResult> AddMultipleTournamentTablesAsync(
+        int tournamentId, string ownerUserId, AddMultipleTournamentTablesModel m, CancellationToken ct)
+    {
+        var t = await _db.Tournaments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+
+        var result = new BulkAddTablesResult();
+        var toAdd = new List<TournamentTable>();
+
+        for (int i = m.StartNumber; i <= m.EndNumber; i++)
+        {
+            toAdd.Add(new TournamentTable
+            {
+                TournamentId = tournamentId,
+                Label = $"Table {i}",
+                Manufacturer = m.Manufacturer?.Trim(),
+                SizeFoot = m.SizeFoot,
+                Status = TableStatus.Open,
+                IsStreaming = false
+            });
+        }
+
+        if (toAdd.Count == 0) return result;
+
+        _db.TournamentTables.AddRange(toAdd);
+        await _db.SaveChangesAsync(ct);
+
+        // Result
+        result.AddedCount = toAdd.Count;
+        result.Added = toAdd
+            .Select(x => new BulkAddTablesResult.Item
+            {
+                Id = x.Id,
+                Label = x.Label
+            })
+            .ToList();
+
+        return result;
+    }
+
+    public async Task<bool> UpdateTournamentTableAsync(
+    int tournamentId, int tableId, string ownerUserId, UpdateTournamentTableModel m, CancellationToken ct)
+    {
+        var t = await _db.Tournaments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+        if (t is null || t.OwnerUserId != ownerUserId) return false;
+
+        var table = await _db.TournamentTables
+            .FirstOrDefaultAsync(x => x.Id == tableId && x.TournamentId == tournamentId, ct);
+        if (table is null) return false;
+
+        // Update fields
+        if (!string.IsNullOrWhiteSpace(m.Label))
+            table.Label = m.Label.Trim();
+
+        if (m.Manufacturer != null)
+            table.Manufacturer = m.Manufacturer.Trim();
+
+        if (m.SizeFoot.HasValue)
+            table.SizeFoot = m.SizeFoot.Value;
+
+        if (m.Status.HasValue)
+            table.Status = m.Status.Value;
+
+        if (m.IsStreaming.HasValue)
+            table.IsStreaming = m.IsStreaming.Value;
+
+        if (m.LiveStreamUrl != null)
+            table.LiveStreamUrl = m.LiveStreamUrl.Trim();
+
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<DeleteTablesResult?> DeleteTournamentTablesAsync(
+        int tournamentId, string ownerUserId, DeleteTablesModel m, CancellationToken ct)
+    {
+        var t = await _db.Tournaments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+        if (t is null || t.OwnerUserId != ownerUserId) return null;
+
+        var result = new DeleteTablesResult();
+
+        if (m.TableIds.Count == 0) return result;
+
+        // Get existing tables 
+        var existingTables = await _db.TournamentTables
+            .Where(x => x.TournamentId == tournamentId && m.TableIds.Contains(x.Id))
+            .ToListAsync(ct);
+
+        var existingIds = existingTables.Select(x => x.Id).ToHashSet();
+
+        // Track not found table
+        foreach (var requestedId in m.TableIds)
+        {
+            if (!existingIds.Contains(requestedId))
+            {
+                result.Failed.Add(new DeleteTablesResult.FailedItem
+                {
+                    TableId = requestedId,
+                    Reason = "Table not found or doesn't belong to this tournament"
+                });
+            }
+        }
+
+        if (existingTables.Count > 0)
+        {
+            _db.TournamentTables.RemoveRange(existingTables);
+            await _db.SaveChangesAsync(ct);
+
+            result.DeletedCount = existingTables.Count;
+            result.DeletedIds = existingTables.Select(x => x.Id).ToList();
+        }
+
+        return result;
+    }
+
+    public async Task<List<TournamentTableDto>> GetTournamentTablesAsync(
+        int tournamentId, CancellationToken ct = default)
+    {
+        var tables = await _db.TournamentTables
+            .AsNoTracking()
+            .Where(x => x.TournamentId == tournamentId)
+            .OrderBy(x => x.Label)
+            .Select(x => new TournamentTableDto
+            {
+                Id = x.Id,
+                Label = x.Label,
+                Manufacturer = x.Manufacturer,
+                SizeFoot = x.SizeFoot,
+                Status = x.Status,
+                IsStreaming = x.IsStreaming,
+                LiveStreamUrl = x.LiveStreamUrl
+            })
+            .ToListAsync(ct);
+
+        return tables;
+    }
+
+    public async Task<DeletePlayersResult?> DeleteTournamentPlayersAsync(
+        int tournamentId, string ownerUserId, DeletePlayersModel m, CancellationToken ct)
+    {
+        var t = await _db.Tournaments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+        if (t is null || t.OwnerUserId != ownerUserId) return null;
+
+        var result = new DeletePlayersResult();
+
+        if (m.PlayerIds.Count == 0) return result;
+
+        // Get existing tournament players
+        var existingPlayers = await _db.TournamentPlayers
+            .Where(x => x.TournamentId == tournamentId && m.PlayerIds.Contains(x.Id))
+            .ToListAsync(ct);
+
+        var existingIds = existingPlayers.Select(x => x.Id).ToHashSet();
+
+        // Track not found players
+        foreach (var requestedId in m.PlayerIds)
+        {
+            if (!existingIds.Contains(requestedId))
+            {
+                result.Failed.Add(new DeletePlayersResult.FailedItem
+                {
+                    PlayerId = requestedId,
+                    Reason = "Player not found or doesn't belong to this tournament"
+                });
+            }
+        }
+
+        if (existingPlayers.Count > 0)
+        {
+            _db.TournamentPlayers.RemoveRange(existingPlayers);
+            await _db.SaveChangesAsync(ct);
+
+            result.DeletedCount = existingPlayers.Count;
+            result.DeletedIds = existingPlayers.Select(x => x.Id).ToList();
+        }
+
+        return result;
+    }
+
+
+
+
+
 
 }

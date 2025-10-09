@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PoolMate.Api.Data;
 
@@ -11,9 +12,11 @@ using PoolMate.Api.Data;
 namespace PoolMate.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251008173356_AddDbForTournamentTable")]
+    partial class AddDbForTournamentTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -580,7 +583,8 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TournamentId");
+                    b.HasIndex("TournamentId", "Label")
+                        .IsUnique();
 
                     b.ToTable("TournamentTables");
                 });

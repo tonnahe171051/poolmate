@@ -16,6 +16,7 @@ namespace PoolMate.Api.Data
         public DbSet<PayoutTemplate> PayoutTemplates => Set<PayoutTemplate>();
         public DbSet<Player> Players => Set<Player>();
         public DbSet<TournamentPlayer> TournamentPlayers => Set<TournamentPlayer>();
+        public DbSet<TournamentTable> TournamentTables => Set<TournamentTable>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -105,15 +106,24 @@ namespace PoolMate.Api.Data
                 .WithMany(p => p.TournamentPlayers)
                 .HasForeignKey(tp => tp.PlayerId)
                 .OnDelete(DeleteBehavior.SetNull);
-            tp.HasIndex(x => new {x.TournamentId, x.PlayerId})
+            tp.HasIndex(x => new { x.TournamentId, x.PlayerId })
                 .IsUnique()
                 .HasFilter("[PlayerId] IS NOT NULL");
             tp.Property(x => x.DisplayName).IsRequired().HasMaxLength(200);
 
             //index for faster search
-            tp.HasIndex(x => x.TournamentId);                         
-            tp.HasIndex(x => new { x.TournamentId, x.Status });       
-            tp.HasIndex(x => new { x.TournamentId, x.Seed });         
+            tp.HasIndex(x => x.TournamentId);
+            tp.HasIndex(x => new { x.TournamentId, x.Status });
+            tp.HasIndex(x => new { x.TournamentId, x.Seed });
+
+            //Tournament table
+            var tt = builder.Entity<TournamentTable>();
+            tt.Property(x => x.SizeFoot).HasPrecision(3, 1);
+            tt.HasIndex(x => x.TournamentId);
+            tt.HasOne(x => x.Tournament)
+                .WithMany(t => t.Tables)
+                .HasForeignKey(x => x.TournamentId)
+                .OnDelete(DeleteBehavior.Cascade);
 
 
         }
