@@ -8,7 +8,7 @@ namespace PoolMate.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AuthController(AuthService auth, IConfiguration config) : ControllerBase
+public class AuthController(IAuthService auth, IConfiguration config) : ControllerBase
 {
     
     [HttpPost("register")]
