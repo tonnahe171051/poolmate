@@ -42,7 +42,36 @@ namespace PoolMate.Api.Services
         int tournamentId,
         string? searchName = null,
         CancellationToken ct = default);
+        Task<bool> UpdateTournamentPlayerAsync(
+        int tournamentId,
+        int tpId,
+        string ownerUserId,
+        UpdateTournamentPlayerModel m,
+        CancellationToken ct);
+        Task<TournamentTable?> AddTournamentTableAsync(
+        int tournamentId, string ownerUserId, AddTournamentTableModel m, CancellationToken ct);
+
+        Task<BulkAddTablesResult> AddMultipleTournamentTablesAsync(
+            int tournamentId, string ownerUserId, AddMultipleTournamentTablesModel m, CancellationToken ct);
+
+        Task<bool> UpdateTournamentTableAsync(
+            int tournamentId, int tableId, string ownerUserId, UpdateTournamentTableModel m, CancellationToken ct);
+
+        Task<DeleteTablesResult?> DeleteTournamentTablesAsync(
+            int tournamentId, string ownerUserId, DeleteTablesModel m, CancellationToken ct);
+
+        Task<List<TournamentTableDto>> GetTournamentTablesAsync(
+            int tournamentId, CancellationToken ct = default);
+
+        Task<DeletePlayersResult?> DeleteTournamentPlayersAsync(
+            int tournamentId, string ownerUserId, DeletePlayersModel m, CancellationToken ct);
+
+
+
+
 
 
     }
 }
+
+
