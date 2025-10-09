@@ -251,6 +251,10 @@ public class TournamentsController : ControllerBase
         if (model.EndNumber < model.StartNumber)
             return BadRequest(new { message = "End number must be greater than or equal to start number." });
 
+        var tableCount = model.EndNumber - model.StartNumber + 1;
+        if (tableCount > 50)
+            return BadRequest(new { message = "Cannot add more than 50 tables at once." });
+
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
         var result = await _svc.AddMultipleTournamentTablesAsync(id, userId, model, ct);
