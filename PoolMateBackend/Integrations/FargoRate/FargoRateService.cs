@@ -182,11 +182,13 @@ namespace PoolMate.Api.Integrations.FargoRate
 
             var playerIds = toApply.Select(r => r.TournamentPlayerId).ToList();
 
-            // Lấy players từ database
             var players = await _dbContext.TournamentPlayers
                 .Where(p => playerIds.Contains(p.Id))
                 .ToListAsync();
 
+            var sortedApplyRequests = toApply.OrderByDescending(r => r.Rating).ToList();
+
+            int seed = 1;
             int updatedCount = 0;
 
             foreach (var request in toApply)
@@ -196,11 +198,13 @@ namespace PoolMate.Api.Integrations.FargoRate
                 if (player != null)
                 {
                     player.SkillLevel = request.Rating.Value;
+                    player.Seed = seed;
+                    seed++;
                     updatedCount++;
 
                     _logger.LogInformation(
-                        "Applied Fargo rating to tournament player {PlayerId}: Rating={Rating}",
-                        player.Id, request.Rating.Value);
+                        "Applied Fargo rating to tournament player {PlayerId}: Rating={Rating}, Seed = {Seed}",
+                        player.Id, request.Rating.Value, player.Seed);
                 }
                 else
                 {
