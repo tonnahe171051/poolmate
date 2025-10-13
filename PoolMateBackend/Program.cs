@@ -7,6 +7,7 @@ using Microsoft.OpenApi.Models;
 using PoolMate.Api.Data;
 using PoolMate.Api.Integrations.Cloudinary36;
 using PoolMate.Api.Integrations.Email;
+using PoolMate.Api.Integrations.FargoRate;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System;
@@ -126,6 +127,20 @@ builder.Services.Configure<EmailSettings>(
 
 builder.Services.AddScoped<IEmailSender, MailKitEmailSender>();
 
+//FargoRate
+builder.Services.Configure<FargoRateOptions>(
+    builder.Configuration.GetSection(FargoRateOptions.SectionName));
+
+builder.Services.AddHttpClient<IFargoRateService, FargoRateService>(client =>
+{
+    client.BaseAddress = new Uri("https://dashboard.fargorate.com/api/");
+    client.Timeout = TimeSpan.FromSeconds(30);
+    client.DefaultRequestHeaders.Add("User-Agent", "YourTournamentApp/1.0");
+});
+
+// Add Memory Cache
+builder.Services.AddMemoryCache();
+
 // App services
 builder.Services.AddScoped<AuthService>();
 
@@ -176,7 +191,7 @@ else
     app.UseCors("ProductionPolicy");
 }
 
-app.UseAuthentication();   
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
