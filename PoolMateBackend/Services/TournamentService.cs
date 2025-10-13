@@ -1016,7 +1016,6 @@ public class TournamentService : ITournamentService
 
         await _db.SaveChangesAsync(ct);
         return true;
-    }
-
+    } 
 
 }
