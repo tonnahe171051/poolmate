@@ -366,13 +366,16 @@ public class TournamentsController : ControllerBase
             message = $"Successfully deleted {result.DeletedCount} player(s)."
         });
     }
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteTournament(int id, CancellationToken ct)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var success = await _svc.DeleteTournamentAsync(id, userId, ct);
 
+        if (!success)
+            return NotFound(new { message = "Tournament not found or you don't have permission to delete it." });
 
-
-
-
-
-
-
+        return Ok(new { message = "Tournament deleted successfully." });
+    }
 
 }
