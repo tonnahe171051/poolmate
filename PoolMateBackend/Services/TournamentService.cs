@@ -117,7 +117,20 @@ public class TournamentService : ITournamentService
         if (m.OnlineRegistrationEnabled.HasValue)
             t.OnlineRegistrationEnabled = m.OnlineRegistrationEnabled.Value;
 
-        if (m.BracketSizeEstimate.HasValue) t.BracketSizeEstimate = m.BracketSizeEstimate.Value;
+        if (m.BracketSizeEstimate.HasValue)
+        {
+            var currentPlayerCount = await _db.TournamentPlayers
+                .CountAsync(x => x.TournamentId == id, ct);
+
+            if (m.BracketSizeEstimate.Value < currentPlayerCount)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot reduce bracket size to {m.BracketSizeEstimate.Value}. " +
+                    $"Tournament currently has {currentPlayerCount} players registered.");
+            }
+
+            t.BracketSizeEstimate = m.BracketSizeEstimate.Value;
+        }
 
         // ------- settings (enum + rule) -------
         if (m.PlayerType.HasValue) t.PlayerType = m.PlayerType.Value;
@@ -141,11 +154,9 @@ public class TournamentService : ITournamentService
         if (m.PayoutMode.HasValue) t.PayoutMode = m.PayoutMode.Value;
         if (m.PayoutTemplateId.HasValue) t.PayoutTemplateId = m.PayoutTemplateId.Value;
 
-        // Nếu đang Custom và FE muốn sửa tổng thưởng, cho phép
         if (t.PayoutMode == PayoutMode.Custom && m.TotalPrize.HasValue)
             t.TotalPrize = Math.Max(0, m.TotalPrize.Value);
 
-        // Với Template (hoặc chuyển từ Custom → Template), luôn recalc & lưu
         if (t.PayoutMode == PayoutMode.Template)
             ApplyPayout(t);
 
@@ -197,11 +208,61 @@ public class TournamentService : ITournamentService
         return true;
     }
 
-    public Task<Tournament?> GetAsync(int id, CancellationToken ct)
-        => _db.Tournaments
-             .Include(x => x.Venue)
-             .Include(x => x.PayoutTemplate)
-             .FirstOrDefaultAsync(x => x.Id == id, ct);
+    public async Task<PagingList<UserTournamentListDto>> GetTournamentsByUserAsync(
+        string ownerUserId,
+        string? searchName = null,
+        TournamentStatus? status = null,
+        int pageIndex = 1,
+        int pageSize = 10,
+        CancellationToken ct = default)
+    {
+        if (pageIndex < 1) pageIndex = 1;
+        if (pageSize < 1 || pageSize > 100) pageSize = 10;
+
+        var query = _db.Tournaments
+            .Include(x => x.Venue)
+            .Where(x => x.OwnerUserId == ownerUserId);
+
+        if (!string.IsNullOrWhiteSpace(searchName))
+        {
+            var trimmedSearch = searchName.Trim();
+            query = query.Where(x => x.Name.Contains(trimmedSearch));
+        }
+
+        if (status.HasValue)
+        {
+            query = query.Where(x => x.Status == status.Value);
+        }
+
+        var totalRecords = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(x => x.CreatedAt)
+            .Skip((pageIndex - 1) * pageSize)
+            .Take(pageSize)
+            .Select(x => new UserTournamentListDto
+            {
+                Id = x.Id,
+                Name = x.Name,
+                CreatedAt = x.CreatedAt,
+                Status = x.Status,
+                TotalPlayers = x.TournamentPlayers.Count,
+                GameType = x.GameType,
+                BracketType = x.BracketType,
+                Venue = x.Venue == null ? null : new VenueDto
+                {
+                    Id = x.Venue.Id,
+                    Name = x.Venue.Name,
+                    Address = x.Venue.Address,
+                    City = x.Venue.City
+                }
+            })
+            .ToListAsync(ct);
+
+        return PagingList<UserTournamentListDto>.Create(items, totalRecords, pageIndex, pageSize);
+    }
+
+
 
     public async Task<PayoutPreviewResponse> PreviewPayoutAsync(PreviewPayoutRequest m, CancellationToken ct)
     {
@@ -858,9 +919,65 @@ public class TournamentService : ITournamentService
         return result;
     }
 
+    public async Task<TournamentDetailDto?> GetTournamentDetailAsync(int id, CancellationToken ct)
+    {
+        var tournament = await _db.Tournaments
+            .AsNoTracking()
+            .Include(x => x.Venue)
+            .Include(x => x.OwnerUser)
+            .Where(x => x.Id == id)
+            .Select(x => new TournamentDetailDto
+            {
+                Id = x.Id,
+                Name = x.Name,
+                Description = x.Description,
+                StartUtc = x.StartUtc,
+                EndUtc = x.EndUtc,
+                CreatedAt = x.CreatedAt,
+                UpdatedAt = x.UpdatedAt,
 
+                // Tournament settings
+                IsPublic = x.IsPublic,
+                OnlineRegistrationEnabled = x.OnlineRegistrationEnabled,
+                IsStarted = x.IsStarted,
+                Status = x.Status,
 
+                // Game settings
+                PlayerType = x.PlayerType,
+                BracketType = x.BracketType,
+                GameType = x.GameType,
+                BracketOrdering = x.BracketOrdering,
+                BracketSizeEstimate = x.BracketSizeEstimate,
+                WinnersRaceTo = x.WinnersRaceTo,
+                LosersRaceTo = x.LosersRaceTo,
+                FinalsRaceTo = x.FinalsRaceTo,
+                Rule = x.Rule,
+                BreakFormat = x.BreakFormat,
 
+                EntryFee = x.EntryFee,
+                AdminFee = x.AdminFee,
+                AddedMoney = x.AddedMoney,
+                PayoutMode = x.PayoutMode,
+                PayoutTemplateId = x.PayoutTemplateId,
+                TotalPrize = x.TotalPrize,
 
+                FlyerUrl = x.FlyerUrl,
+
+                CreatorName = (x.OwnerUser.FirstName + " " + x.OwnerUser.LastName) ?? x.OwnerUser.UserName!,
+                Venue = x.Venue == null ? null : new VenueDto
+                {
+                    Id = x.Venue.Id,
+                    Name = x.Venue.Name,
+                    Address = x.Venue.Address,
+                    City = x.Venue.City
+                },
+
+                TotalPlayers = x.TournamentPlayers.Count,
+                TotalTables = x.Tables.Count
+            })
+            .FirstOrDefaultAsync(ct);
+
+        return tournament;
+    }
 
 }

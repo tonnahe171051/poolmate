@@ -26,12 +26,28 @@ public class TournamentsController : ControllerBase
         return Ok(new { id });
     }
 
+    [HttpGet("my-tournaments")]
+    public async Task<ActionResult<PagingList<UserTournamentListDto>>> GetTournamentsByUser(
+    [FromQuery] string? searchName = null,
+    [FromQuery] TournamentStatus? status = null,
+    [FromQuery] int pageIndex = 1,
+    [FromQuery] int pageSize = 10,
+    CancellationToken ct = default)
+    {
+        if (pageIndex < 1) pageIndex = 1;
+        if (pageSize < 1 || pageSize > 100) pageSize = 10;
+
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var result = await _svc.GetTournamentsByUserAsync(userId, searchName, status, pageIndex, pageSize, ct);
+        return Ok(result);
+    }
+
     [HttpGet("{id:int}")]
     [AllowAnonymous]
-    public async Task<IActionResult> Get(int id, CancellationToken ct)
+    public async Task<ActionResult<TournamentDetailDto>> GetTournamentDetail(int id, CancellationToken ct)
     {
-        var t = await _svc.GetAsync(id, ct);
-        return t is null ? NotFound() : Ok(t);
+        var tournament = await _svc.GetTournamentDetailAsync(id, ct);
+        return tournament is null ? NotFound() : Ok(tournament);
     }
 
     [HttpPut("{id:int}")]
