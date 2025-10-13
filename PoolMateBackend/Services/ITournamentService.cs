@@ -75,6 +75,9 @@ namespace PoolMate.Api.Services
 
         Task<TournamentDetailDto?> GetTournamentDetailAsync(int id, CancellationToken ct);
 
+        Task<bool> DeleteTournamentAsync(int id, string ownerUserId, CancellationToken ct);
+
+
 
 
 
