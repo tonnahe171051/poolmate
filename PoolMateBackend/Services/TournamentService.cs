@@ -918,7 +918,6 @@ public class TournamentService : ITournamentService
 
         return result;
     }
-
     public async Task<TournamentDetailDto?> GetTournamentDetailAsync(int id, CancellationToken ct)
     {
         var tournament = await _db.Tournaments
@@ -979,5 +978,45 @@ public class TournamentService : ITournamentService
 
         return tournament;
     }
+    public async Task<bool> DeleteTournamentAsync(int id, string ownerUserId, CancellationToken ct)
+    {
+        var tournament = await _db.Tournaments
+            .FirstOrDefaultAsync(x => x.Id == id, ct);
+
+        if (tournament is null || tournament.OwnerUserId != ownerUserId)
+            return false;
+
+        // Delete tournament players
+        var tournamentPlayers = await _db.TournamentPlayers
+            .Where(x => x.TournamentId == id)
+            .ToListAsync(ct);
+
+        if (tournamentPlayers.Count > 0)
+        {
+            _db.TournamentPlayers.RemoveRange(tournamentPlayers);
+        }
+
+        // Delete tournament tables
+        var tournamentTables = await _db.TournamentTables
+            .Where(x => x.TournamentId == id)
+            .ToListAsync(ct);
+
+        if (tournamentTables.Count > 0)
+        {
+            _db.TournamentTables.RemoveRange(tournamentTables);
+        }
+
+        // Delete flyer from Cloudinary if exists
+        if (!string.IsNullOrEmpty(tournament.FlyerPublicId))
+        {
+            await _cloud.DeleteAsync(tournament.FlyerPublicId);
+        }
+
+        _db.Tournaments.Remove(tournament);
+
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
 
 }
