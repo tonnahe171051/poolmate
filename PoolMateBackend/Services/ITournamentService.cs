@@ -12,7 +12,14 @@ namespace PoolMate.Api.Services
         Task<bool> StartAsync(int id, string ownerUserId, CancellationToken ct);
         Task<bool> EndAsync(int id, string ownerUserId, CancellationToken ct);
         Task<PayoutPreviewResponse> PreviewPayoutAsync(PreviewPayoutRequest m, CancellationToken ct);
-        Task<Tournament?> GetAsync(int id, CancellationToken ct);
+        Task<PagingList<UserTournamentListDto>> GetTournamentsByUserAsync(
+         string ownerUserId,
+         string? searchName = null,
+         TournamentStatus? status = null,
+         int pageIndex = 1,
+         int pageSize = 10,
+         CancellationToken ct = default);
+
         Task<List<PayoutTemplateDto>> GetPayoutTemplatesAsync(CancellationToken ct);
         Task<PagingList<TournamentListDto>> GetTournamentsAsync(
         string? searchName = null,
@@ -65,6 +72,9 @@ namespace PoolMate.Api.Services
 
         Task<DeletePlayersResult?> DeleteTournamentPlayersAsync(
             int tournamentId, string ownerUserId, DeletePlayersModel m, CancellationToken ct);
+
+        Task<TournamentDetailDto?> GetTournamentDetailAsync(int id, CancellationToken ct);
+
 
 
 
