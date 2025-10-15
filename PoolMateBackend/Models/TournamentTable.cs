@@ -23,5 +23,7 @@ namespace PoolMate.Api.Models
         public bool IsStreaming { get; set; } = false;
         [MaxLength(int.MaxValue)]
         public string? LiveStreamUrl { get; set; }
+
+        public ICollection<Match> Matches { get; set; } = new List<Match>();
     }
 }

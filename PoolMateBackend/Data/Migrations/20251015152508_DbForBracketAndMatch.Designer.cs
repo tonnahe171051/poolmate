@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PoolMate.Api.Data;
 
@@ -11,9 +12,11 @@ using PoolMate.Api.Data;
 namespace PoolMate.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251015152508_DbForBracketAndMatch")]
+    partial class DbForBracketAndMatch
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -308,14 +311,6 @@ namespace PoolMate.Api.Data.Migrations
                     b.HasIndex("NextLoserMatchId");
 
                     b.HasIndex("NextWinnerMatchId");
-
-                    b.HasIndex("Player1TpId");
-
-                    b.HasIndex("Player2TpId");
-
-                    b.HasIndex("TableId");
-
-                    b.HasIndex("WinnerTpId");
 
                     b.HasIndex("TournamentId", "StageId");
 
@@ -828,26 +823,11 @@ namespace PoolMate.Api.Data.Migrations
                         .HasForeignKey("NextWinnerMatchId")
                         .OnDelete(DeleteBehavior.NoAction);
 
-                    b.HasOne("PoolMate.Api.Models.TournamentPlayer", "Player1Tp")
-                        .WithMany()
-                        .HasForeignKey("Player1TpId")
-                        .OnDelete(DeleteBehavior.NoAction);
-
-                    b.HasOne("PoolMate.Api.Models.TournamentPlayer", "Player2Tp")
-                        .WithMany()
-                        .HasForeignKey("Player2TpId")
-                        .OnDelete(DeleteBehavior.NoAction);
-
                     b.HasOne("PoolMate.Api.Models.TournamentStage", "Stage")
                         .WithMany("Matches")
                         .HasForeignKey("StageId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.HasOne("PoolMate.Api.Models.TournamentTable", "Table")
-                        .WithMany("Matches")
-                        .HasForeignKey("TableId")
-                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.HasOne("PoolMate.Api.Models.Tournament", "Tournament")
                         .WithMany("Matches")
@@ -855,22 +835,9 @@ namespace PoolMate.Api.Data.Migrations
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
-                    b.HasOne("PoolMate.Api.Models.TournamentPlayer", "WinnerTp")
-                        .WithMany()
-                        .HasForeignKey("WinnerTpId")
-                        .OnDelete(DeleteBehavior.NoAction);
-
-                    b.Navigation("Player1Tp");
-
-                    b.Navigation("Player2Tp");
-
                     b.Navigation("Stage");
 
-                    b.Navigation("Table");
-
                     b.Navigation("Tournament");
-
-                    b.Navigation("WinnerTp");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Player", b =>
@@ -986,11 +953,6 @@ namespace PoolMate.Api.Data.Migrations
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.TournamentStage", b =>
-                {
-                    b.Navigation("Matches");
-                });
-
-            modelBuilder.Entity("PoolMate.Api.Models.TournamentTable", b =>
                 {
                     b.Navigation("Matches");
                 });
