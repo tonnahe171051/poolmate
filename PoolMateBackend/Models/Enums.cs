@@ -4,7 +4,7 @@
     public enum PlayerType { Singles, Doubles }
     public enum BracketType { SingleElimination, DoubleElimination }
     public enum GameType { EightBall, NineBall, TenBall }
-    public enum BracketOrdering { Random, Seeded, SetOrder }
+    public enum BracketOrdering { Random, Seeded }
 
     // filter tournament
     public enum TournamentStatus { Upcoming, InProgress, Completed }
@@ -20,6 +20,12 @@
     public enum TournamentPlayerStatus { Unconfirmed, Confirmed }
 
     public enum TableStatus { Open, InUse, Closed }
+
+    public enum StageStatus { NotStarted, InProgress, Completed}
+
+    public enum BracketSide { Winners, Losers, Finals, Knockout}
+
+    public enum MatchStatus { NotStarted, InProgress, Completed}
 
 
 }

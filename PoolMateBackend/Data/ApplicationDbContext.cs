@@ -17,6 +17,8 @@ namespace PoolMate.Api.Data
         public DbSet<Player> Players => Set<Player>();
         public DbSet<TournamentPlayer> TournamentPlayers => Set<TournamentPlayer>();
         public DbSet<TournamentTable> TournamentTables => Set<TournamentTable>();
+        public DbSet<TournamentStage> TournamentStages => Set<TournamentStage>();
+        public DbSet<Match> Matches => Set<Match>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -55,6 +57,14 @@ namespace PoolMate.Api.Data
 
             // ===== Tournament =====
             var t = builder.Entity<Tournament>();
+            t.ToTable(tb =>
+            {
+                // Check constraint: AdvanceToStage2Count is power of two or null
+                tb.HasCheckConstraint(
+                    "CK_Tournament_Advance_PowerOfTwo",
+                    "[AdvanceToStage2Count] IS NULL OR ([AdvanceToStage2Count] > 0 AND ([AdvanceToStage2Count] & ([AdvanceToStage2Count]-1)) = 0)"
+                );
+            });
 
             // Decimal precision
             t.Property(x => x.EntryFee).HasColumnType("decimal(12,2)");
@@ -125,7 +135,51 @@ namespace PoolMate.Api.Data
                 .HasForeignKey(x => x.TournamentId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            // ------- TournamentStage -------
+            var ts = builder.Entity<TournamentStage>();
+            ts.HasIndex(x => new { x.TournamentId, x.StageNo }).IsUnique();
+            ts.HasOne(x => x.Tournament)
+              .WithMany(t => t.Stages)
+              .HasForeignKey(x => x.TournamentId)
+              .OnDelete(DeleteBehavior.Cascade);
 
+            // ------- Match -------
+            var m = builder.Entity<Match>();
+            m.HasIndex(x => new { x.TournamentId, x.StageId });
+            m.HasIndex(x => new { x.StageId, x.Bracket, x.RoundNo });
+
+            m.HasOne(x => x.Tournament)
+             .WithMany(t => t.Matches)
+             .HasForeignKey(x => x.TournamentId)
+             .OnDelete(DeleteBehavior.NoAction);
+
+            m.HasOne(x => x.Stage)
+             .WithMany(s => s.Matches)
+             .HasForeignKey(x => x.StageId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            m.HasOne(x => x.Player1Tp).WithMany()
+             .HasForeignKey(x => x.Player1TpId).OnDelete(DeleteBehavior.NoAction);
+            m.HasOne(x => x.Player2Tp).WithMany()
+             .HasForeignKey(x => x.Player2TpId).OnDelete(DeleteBehavior.NoAction);
+            m.HasOne(x => x.WinnerTp).WithMany()
+             .HasForeignKey(x => x.WinnerTpId).OnDelete(DeleteBehavior.NoAction);
+
+            // FK -> TournamentTables 
+            m.HasOne(x => x.Table).WithMany(t => t.Matches)
+             .HasForeignKey(x => x.TableId).OnDelete(DeleteBehavior.NoAction);
+
+            m.HasIndex(x => x.Player1TpId);
+            m.HasIndex(x => x.Player2TpId);
+            m.HasIndex(x => x.WinnerTpId);
+            m.HasIndex(x => x.TableId);
+
+            // self refs for next pointers
+            m.HasOne<Match>().WithMany().HasForeignKey(x => x.NextWinnerMatchId).OnDelete(DeleteBehavior.NoAction);
+            m.HasOne<Match>().WithMany().HasForeignKey(x => x.NextLoserMatchId).OnDelete(DeleteBehavior.NoAction);
+
+            // RowVersion (optimistic concurrency)
+            m.Property(x => x.RowVersion).IsRowVersion();
         }
 
         // Update UpdatedAt cho Tournament
