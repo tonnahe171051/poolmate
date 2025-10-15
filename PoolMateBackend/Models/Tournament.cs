@@ -66,9 +66,15 @@ namespace PoolMate.Api.Models
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-        //// Navigations khác (để bạn thêm dần)
+        public bool IsMultiStage { get; set; } = false;
+        public int? AdvanceToStage2Count { get; set; }
+
+        public BracketOrdering Stage1Ordering { get; set; } = BracketOrdering.Random;
+        public BracketOrdering Stage2Ordering { get; set; } = BracketOrdering.Random;
+
         public ICollection<TournamentPlayer> TournamentPlayers { get; set; } = new List<TournamentPlayer>();
         public ICollection<TournamentTable> Tables { get; set; } = new List<TournamentTable>();
-        //public ICollection<Match> Matches { get; set; } = new();
+        public ICollection<Match> Matches { get; set; } = new List<Match>();
+        public ICollection<TournamentStage> Stages { get; set; } = new List<TournamentStage>();
     }
 }
