@@ -140,38 +140,38 @@ namespace PoolMate.Api.Services
 
         private List<PlayerSeed?> MakeSlots(List<PlayerSeed>? players, int size, BracketOrdering ordering)
         {
-            // Seeded: seed != null (1..k) đứng đầu; còn lại là unseeded (null) —> Random
-            var list = new List<PlayerSeed?>(size);
-            if (players is null || players.Count == 0)
+            var slots = Enumerable.Repeat<PlayerSeed?>(null, size).ToList();
+            if (players is null || players.Count == 0) return slots;
+
+            if (ordering == BracketOrdering.Random)
             {
-                for (int i = 0; i < size; i++) list.Add(null);
-                return list;
+                // Random
+                var shuffled = players.ToList();
+                FisherYates(shuffled);
+
+                for (int i = 0; i < Math.Min(size, shuffled.Count); i++)
+                    slots[i] = shuffled[i];
+                return slots;
             }
 
-            var seeded = players.Where(p => p.Seed.HasValue)
-                                .OrderBy(p => p.Seed!.Value)
-                                .ToList();
+            // Seeded
+            var seeded = players.Where(p => p.Seed.HasValue).OrderBy(p => p.Seed!.Value).ToList();
             var unseeded = players.Where(p => !p.Seed.HasValue).ToList();
-            if (ordering == BracketOrdering.Random)
-                FisherYates(unseeded);
 
-            // map vào slot theo “bracket seeding”: 1 vs N, 2 vs N-1, 3 vs N-2, ...
-            var seedSlots = SeedingSlots(size); // trả về mảng vị trí 0-based [0..size-1] theo thứ tự seed 1..size
-            var slots = Enumerable.Repeat<PlayerSeed?>(null, size).ToList();
+            FisherYates(unseeded);
 
-            // đặt nhóm seeded
+            var seedSlots = TennisSeedPositions(size);
             for (int i = 0; i < seeded.Count && i < size; i++)
                 slots[seedSlots[i]] = seeded[i];
 
-            // lấp phần còn lại bằng unseeded (Random hoặc Seeded nhưng không có seed)
             int u = 0;
             for (int i = 0; i < size; i++)
-            {
                 if (slots[i] is null)
-                    slots[i] = (u < unseeded.Count) ? unseeded[u++] : null; // thừa slot = BYE
-            }
+                    slots[i] = (u < unseeded.Count) ? unseeded[u++] : null;
+
             return slots;
         }
+
 
         private StagePreviewDto PreviewSingle(int stageNo, BracketOrdering ordering, List<PlayerSeed?> slots)
         {
@@ -324,23 +324,24 @@ namespace PoolMate.Api.Services
             }
         }
 
-        private static int[] SeedingSlots(int n)
+        private static int[] TennisSeedPositions(int n)
         {
-            var arr = Enumerable.Range(0, n).ToArray();
-            return PermuteSeeding(arr);
-
-            static int[] PermuteSeeding(int[] positions)
+            var positions = new List<int> { 0, n - 1 };
+            int block = n;
+            while (positions.Count < n)
             {
-                if (positions.Length <= 2) return positions;
-                int half = positions.Length / 2;
-                var top = positions.Take(half).ToArray();
-                var bottom = positions.Skip(half).ToArray();
-                bottom = bottom.Reverse().ToArray(); // mirror
-                var left = PermuteSeeding(top);
-                var right = PermuteSeeding(bottom);
-                return left.Concat(right).ToArray();
+                block /= 2;
+                var next = new List<int>(positions.Count * 2);
+                foreach (var p in positions)
+                {
+                    next.Add(p);
+                    next.Add(p + block);
+                }
+                positions = next;
             }
+            return positions.ToArray();
         }
+
 
         private sealed record PlayerSeed
         {
