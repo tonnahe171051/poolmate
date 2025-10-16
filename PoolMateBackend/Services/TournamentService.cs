@@ -58,8 +58,54 @@ public class TournamentService : ITournamentService
         return (canAdd, currentCount, maxLimit);
     }
 
+    private static bool CanEditBracket(Tournament t)
+    => !(t.IsStarted || t.Status == TournamentStatus.InProgress || t.Status == TournamentStatus.Completed);
+
+    private async Task ValidateSeedAsync(int tournamentId, int? seed, int? excludeTpId, CancellationToken ct)
+    {
+        if (!seed.HasValue) return;
+
+        if (seed.Value <= 0)
+            throw new InvalidOperationException("Seed must be a positive number.");
+
+        var existingPlayer = await _db.TournamentPlayers
+            .Where(x => x.TournamentId == tournamentId &&
+                       x.Seed == seed.Value &&
+                       (excludeTpId == null || x.Id != excludeTpId))
+            .FirstOrDefaultAsync(ct);
+
+        if (existingPlayer != null)
+        {
+            throw new InvalidOperationException($"Seed {seed.Value} is already assigned to player '{existingPlayer.DisplayName}' in this tournament.");
+        }
+    }
+    // end helpers
+
     public async Task<int?> CreateAsync(string ownerUserId, CreateTournamentModel m, CancellationToken ct)
     {
+        var isMulti = m.IsMultiStage ?? false;
+
+        if (isMulti)
+        {
+            if (!m.AdvanceToStage2Count.HasValue || m.AdvanceToStage2Count <= 0)
+                throw new InvalidOperationException("AdvanceToStage2Count is required for multi-stage tournaments.");
+
+            var adv = m.AdvanceToStage2Count.Value;
+            if ((adv & (adv - 1)) != 0)
+                throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2 (2,4,8,16,...)");
+        }
+        else
+        {
+            if (m.AdvanceToStage2Count.HasValue || m.Stage2Ordering.HasValue)
+            {
+                throw new InvalidOperationException("Cannot set Stage2 settings for single-stage tournaments.");
+            }
+        }
+
+        var stage1Type = m.Stage1Type ?? m.BracketType ?? BracketType.DoubleElimination;
+        var stage1Ordering = m.Stage1Ordering ?? m.BracketOrdering ?? BracketOrdering.Random;
+        var stage2Ordering = isMulti ? (m.Stage2Ordering ?? BracketOrdering.Random) : BracketOrdering.Random;
+
         var t = new Tournament
         {
             Name = m.Name.Trim(),
@@ -72,26 +118,31 @@ public class TournamentService : ITournamentService
             OnlineRegistrationEnabled = m.OnlineRegistrationEnabled,
             BracketSizeEstimate = m.BracketSizeEstimate,
 
-            // fees
             EntryFee = m.EntryFee,
             AdminFee = m.AdminFee,
             AddedMoney = m.AddedMoney,
 
-            // payout
             PayoutMode = m.PayoutMode ?? PayoutMode.Template,
             PayoutTemplateId = m.PayoutTemplateId,
-            TotalPrize = m.TotalPrize, // Custom
+            TotalPrize = m.TotalPrize,
 
-            // settings (enum + rule)
             PlayerType = m.PlayerType ?? PlayerType.Singles,
-            BracketType = m.BracketType ?? BracketType.DoubleElimination,
             GameType = m.GameType ?? GameType.NineBall,
-            BracketOrdering = m.BracketOrdering ?? BracketOrdering.Random,
+            Rule = m.Rule ?? Rule.WNT,
+            BreakFormat = m.BreakFormat ?? BreakFormat.WinnerBreak,
+
+            // multi-stage settings
+            IsMultiStage = isMulti,
+            AdvanceToStage2Count = isMulti ? m.AdvanceToStage2Count : null,
+            Stage1Ordering = stage1Ordering,
+            Stage2Ordering = stage2Ordering,
+
+            // bracket settings
+            BracketType = stage1Type,
+            BracketOrdering = stage1Ordering,
             WinnersRaceTo = m.WinnersRaceTo,
             LosersRaceTo = m.LosersRaceTo,
             FinalsRaceTo = m.FinalsRaceTo,
-            Rule = m.Rule ?? Rule.WNT,
-            BreakFormat = m.BreakFormat ?? BreakFormat.WinnerBreak
         };
 
         ApplyPayout(t);
@@ -101,64 +152,75 @@ public class TournamentService : ITournamentService
         return t.Id;
     }
 
-
     public async Task<bool> UpdateAsync(int id, string ownerUserId, UpdateTournamentModel m, CancellationToken ct)
     {
         var t = await _db.Tournaments.FirstOrDefaultAsync(x => x.Id == id, ct);
         if (t is null || t.OwnerUserId != ownerUserId) return false;
 
         if (!string.IsNullOrWhiteSpace(m.Name)) t.Name = m.Name.Trim();
-        if (m.Description != null) t.Description = m.Description;
+        if (m.Description is not null) t.Description = m.Description;
         if (m.StartUtc.HasValue) t.StartUtc = m.StartUtc.Value;
         if (m.EndUtc.HasValue) t.EndUtc = m.EndUtc.Value;
         if (m.VenueId.HasValue) t.VenueId = m.VenueId.Value;
-
         if (m.IsPublic.HasValue) t.IsPublic = m.IsPublic.Value;
-        if (m.OnlineRegistrationEnabled.HasValue)
-            t.OnlineRegistrationEnabled = m.OnlineRegistrationEnabled.Value;
+        if (m.OnlineRegistrationEnabled.HasValue) t.OnlineRegistrationEnabled = m.OnlineRegistrationEnabled.Value;
 
-        if (m.BracketSizeEstimate.HasValue)
-        {
-            var currentPlayerCount = await _db.TournamentPlayers
-                .CountAsync(x => x.TournamentId == id, ct);
-
-            if (m.BracketSizeEstimate.Value < currentPlayerCount)
-            {
-                throw new InvalidOperationException(
-                    $"Cannot reduce bracket size to {m.BracketSizeEstimate.Value}. " +
-                    $"Tournament currently has {currentPlayerCount} players registered.");
-            }
-
-            t.BracketSizeEstimate = m.BracketSizeEstimate.Value;
-        }
-
-        // ------- settings (enum + rule) -------
+        // Game settings
         if (m.PlayerType.HasValue) t.PlayerType = m.PlayerType.Value;
-        if (m.BracketType.HasValue) t.BracketType = m.BracketType.Value;
         if (m.GameType.HasValue) t.GameType = m.GameType.Value;
-        if (m.BracketOrdering.HasValue) t.BracketOrdering = m.BracketOrdering.Value;
-
-        if (m.WinnersRaceTo.HasValue) t.WinnersRaceTo = m.WinnersRaceTo.Value;
-        if (m.LosersRaceTo.HasValue) t.LosersRaceTo = m.LosersRaceTo.Value;
-        if (m.FinalsRaceTo.HasValue) t.FinalsRaceTo = m.FinalsRaceTo.Value;
-
         if (m.Rule.HasValue) t.Rule = m.Rule.Value;
         if (m.BreakFormat.HasValue) t.BreakFormat = m.BreakFormat.Value;
 
-        // ------- fees -------
         if (m.EntryFee.HasValue) t.EntryFee = m.EntryFee.Value;
         if (m.AdminFee.HasValue) t.AdminFee = m.AdminFee.Value;
         if (m.AddedMoney.HasValue) t.AddedMoney = m.AddedMoney.Value;
-
-        // ------- payout mode/template -------
         if (m.PayoutMode.HasValue) t.PayoutMode = m.PayoutMode.Value;
         if (m.PayoutTemplateId.HasValue) t.PayoutTemplateId = m.PayoutTemplateId.Value;
-
         if (t.PayoutMode == PayoutMode.Custom && m.TotalPrize.HasValue)
             t.TotalPrize = Math.Max(0, m.TotalPrize.Value);
-
         if (t.PayoutMode == PayoutMode.Template)
             ApplyPayout(t);
+
+        if (CanEditBracket(t))
+        {
+            if (m.BracketSizeEstimate.HasValue)
+            {
+                var currentPlayers = await _db.TournamentPlayers.CountAsync(x => x.TournamentId == id, ct);
+                if (m.BracketSizeEstimate.Value < currentPlayers)
+                    throw new InvalidOperationException($"Cannot reduce bracket size below current player count ({currentPlayers}).");
+                t.BracketSizeEstimate = m.BracketSizeEstimate.Value;
+            }
+
+            var willBeMulti = m.IsMultiStage ?? t.IsMultiStage;
+            t.IsMultiStage = willBeMulti;
+
+            if (m.Stage1Type.HasValue) t.BracketType = m.Stage1Type.Value;
+            if (m.Stage1Ordering.HasValue)
+            {
+                t.Stage1Ordering = m.Stage1Ordering.Value;
+                t.BracketOrdering = m.Stage1Ordering.Value;
+            }
+
+            if (willBeMulti)
+            {
+                if (m.AdvanceToStage2Count.HasValue)
+                {
+                    var adv = m.AdvanceToStage2Count.Value;
+                    if (adv <= 0 || (adv & (adv - 1)) != 0)
+                        throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2.");
+                    t.AdvanceToStage2Count = adv;
+                }
+                if (m.Stage2Ordering.HasValue) t.Stage2Ordering = m.Stage2Ordering.Value;
+            }
+            else
+            {
+                t.AdvanceToStage2Count = null;
+            }
+
+            if (m.WinnersRaceTo.HasValue) t.WinnersRaceTo = m.WinnersRaceTo.Value;
+            if (m.LosersRaceTo.HasValue) t.LosersRaceTo = m.LosersRaceTo.Value;
+            if (m.FinalsRaceTo.HasValue) t.FinalsRaceTo = m.FinalsRaceTo.Value;
+        }
 
         await _db.SaveChangesAsync(ct);
         return true;
@@ -262,8 +324,6 @@ public class TournamentService : ITournamentService
         return PagingList<UserTournamentListDto>.Create(items, totalRecords, pageIndex, pageSize);
     }
 
-
-
     public async Task<PayoutPreviewResponse> PreviewPayoutAsync(PreviewPayoutRequest m, CancellationToken ct)
     {
         var resp = new PayoutPreviewResponse { Players = Math.Max(0, m.Players) };
@@ -275,14 +335,12 @@ public class TournamentService : ITournamentService
             return resp;
         }
 
-        //Template: tính total
+        //Template
         var total = ComputeTotal(m.Players, m.EntryFee, m.AdminFee, m.AddedMoney);
         resp.Total = total;
 
-        // Nếu không có templateId thì chỉ trả total
         if (!m.PayoutTemplateId.HasValue) return resp;
 
-        //Lấy template và parse %
         var tpl = await _db.PayoutTemplates.AsNoTracking()
                    .FirstOrDefaultAsync(x => x.Id == m.PayoutTemplateId.Value, ct);
         if (tpl is null) return resp;
@@ -299,7 +357,7 @@ public class TournamentService : ITournamentService
             });
         }
 
-        // Bù sai số do round (nếu có) 
+        // lam tron
         var sum = resp.Breakdown.Sum(x => x.Amount);
         if (resp.Breakdown.Count > 0 && sum != total)
         {
@@ -404,6 +462,11 @@ public class TournamentService : ITournamentService
             .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
         if (t is null || t.OwnerUserId != ownerUserId) return null;
 
+        if (!CanEditBracket(t))
+        {
+            throw new InvalidOperationException("Cannot add players after tournament has started or completed.");
+        }
+
         var (canAdd, currentCount, maxLimit) = await CanAddPlayersAsync(tournamentId, 1, ct);
         if (!canAdd)
         {
@@ -417,6 +480,8 @@ public class TournamentService : ITournamentService
                 .AnyAsync(x => x.TournamentId == tournamentId && x.PlayerId == m.PlayerId, ct);
             if (exists) throw new InvalidOperationException("This player is already in the tournament.");
         }
+
+        await ValidateSeedAsync(tournamentId, m.Seed, null, ct);
 
         var tp = new TournamentPlayer
         {
@@ -450,6 +515,11 @@ public class TournamentService : ITournamentService
 
         if (t is null) throw new InvalidOperationException("Tournament not found.");
         if (t.OwnerUserId != ownerUserId) throw new UnauthorizedAccessException();
+
+        if (!CanEditBracket(t))
+        {
+            throw new InvalidOperationException("Cannot add players after tournament has started or completed.");
+        }
 
         var lines = (m.Lines ?? string.Empty)
             .Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
@@ -501,7 +571,6 @@ public class TournamentService : ITournamentService
         _db.TournamentPlayers.AddRange(toAdd);
         await _db.SaveChangesAsync(ct);
 
-        // result
         result.AddedCount = toAdd.Count;
         result.Added = toAdd
             .Select(x => new BulkAddPlayersResult.Item
@@ -679,7 +748,16 @@ public class TournamentService : ITournamentService
             .FirstOrDefaultAsync(x => x.Id == tpId && x.TournamentId == tournamentId, ct);
         if (tp is null) return false;
 
-        //update fields
+        if (!CanEditBracket(t))
+        {
+            throw new InvalidOperationException("Cannot modify players after tournament has started or completed.");
+        }
+
+        if (m.Seed != tp.Seed)
+        {
+            await ValidateSeedAsync(tournamentId, m.Seed, tpId, ct);
+        }
+
         if (!string.IsNullOrWhiteSpace(m.DisplayName))
             tp.DisplayName = m.DisplayName.Trim();
 
@@ -817,6 +895,11 @@ public class TournamentService : ITournamentService
             .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
         if (t is null || t.OwnerUserId != ownerUserId) return null;
 
+        if (!CanEditBracket(t))
+        {
+            throw new InvalidOperationException("Cannot delete tables after tournament has started or completed.");
+        }
+
         var result = new DeleteTablesResult();
 
         if (m.TableIds.Count == 0) return result;
@@ -882,6 +965,11 @@ public class TournamentService : ITournamentService
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
         if (t is null || t.OwnerUserId != ownerUserId) return null;
+
+        if (!CanEditBracket(t))
+        {
+            throw new InvalidOperationException("Cannot delete players after tournament has started or completed.");
+        }
 
         var result = new DeletePlayersResult();
 
@@ -986,36 +1074,37 @@ public class TournamentService : ITournamentService
         if (tournament is null || tournament.OwnerUserId != ownerUserId)
             return false;
 
-        // Delete tournament players
-        var tournamentPlayers = await _db.TournamentPlayers
-            .Where(x => x.TournamentId == id)
-            .ToListAsync(ct);
+        var canDelete = tournament.Status == TournamentStatus.Upcoming ||
+                        tournament.Status == TournamentStatus.Completed;
 
-        if (tournamentPlayers.Count > 0)
+        if (!canDelete)
         {
-            _db.TournamentPlayers.RemoveRange(tournamentPlayers);
+            throw new InvalidOperationException("Tournament can only be deleted before it starts or after it's completed.");
         }
 
-        // Delete tournament tables
-        var tournamentTables = await _db.TournamentTables
+        var deleteMatchesTask = _db.Matches
             .Where(x => x.TournamentId == id)
-            .ToListAsync(ct);
+            .ExecuteDeleteAsync(ct);
 
-        if (tournamentTables.Count > 0)
-        {
-            _db.TournamentTables.RemoveRange(tournamentTables);
-        }
-
-        // Delete flyer from Cloudinary if exists
+        // handle parallel flyer deletion
+        Task? deleteFlyerTask = null;
         if (!string.IsNullOrEmpty(tournament.FlyerPublicId))
         {
-            await _cloud.DeleteAsync(tournament.FlyerPublicId);
+            deleteFlyerTask = _cloud.DeleteAsync(tournament.FlyerPublicId);
+        }
+
+        await deleteMatchesTask;
+        if (deleteFlyerTask != null)
+        {
+            await deleteFlyerTask;
         }
 
         _db.Tournaments.Remove(tournament);
-
         await _db.SaveChangesAsync(ct);
+
         return true;
-    } 
+    }
+
+
 
 }

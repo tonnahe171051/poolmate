@@ -161,7 +161,7 @@ namespace PoolMate.Api.Integrations.FargoRate
             return results;
         }
 
-        public async Task<int> ApplyFargoRatingsAsync(List<ApplyFargoRatingRequest> requests)
+        public async Task<int> ApplyFargoRatingsAsync(int tournamentId, List<ApplyFargoRatingRequest> requests)
         {
             if (requests == null || !requests.Any())
             {
@@ -169,9 +169,9 @@ namespace PoolMate.Api.Integrations.FargoRate
                 return 0;
             }
 
-            _logger.LogInformation("Starting apply Fargo ratings for {Count} requests", requests.Count);
+            _logger.LogInformation("Starting apply Fargo ratings for tournament {TournamentId}, {Count} requests",
+                tournamentId, requests.Count);
 
-            // Apply = true 
             var toApply = requests.Where(r => r.Apply && r.Rating.HasValue).ToList();
 
             if (!toApply.Any())
@@ -181,30 +181,24 @@ namespace PoolMate.Api.Integrations.FargoRate
             }
 
             var playerIds = toApply.Select(r => r.TournamentPlayerId).ToList();
-
-            var players = await _dbContext.TournamentPlayers
+            var playersToUpdate = await _dbContext.TournamentPlayers
                 .Where(p => playerIds.Contains(p.Id))
                 .ToListAsync();
 
-            var sortedApplyRequests = toApply.OrderByDescending(r => r.Rating).ToList();
-
-            int seed = 1;
             int updatedCount = 0;
 
             foreach (var request in toApply)
             {
-                var player = players.FirstOrDefault(p => p.Id == request.TournamentPlayerId);
+                var player = playersToUpdate.FirstOrDefault(p => p.Id == request.TournamentPlayerId);
 
                 if (player != null)
                 {
                     player.SkillLevel = request.Rating.Value;
-                    player.Seed = seed;
-                    seed++;
                     updatedCount++;
 
                     _logger.LogInformation(
-                        "Applied Fargo rating to tournament player {PlayerId}: Rating={Rating}, Seed = {Seed}",
-                        player.Id, request.Rating.Value, player.Seed);
+                        "Updated player {PlayerId}: SkillLevel={Rating}",
+                        player.Id, request.Rating.Value);
                 }
                 else
                 {
@@ -212,10 +206,29 @@ namespace PoolMate.Api.Integrations.FargoRate
                 }
             }
 
+            _logger.LogInformation("Recalculating seeds for all players in tournament {TournamentId}", tournamentId);
+
+            var allPlayersInTournament = await _dbContext.TournamentPlayers
+                .Where(p => p.TournamentId == tournamentId)
+                .OrderByDescending(p => p.SkillLevel ?? 0) 
+                .ThenBy(p => p.Id) // neu skill level giong nhau, sap xep theo Id
+                .ToListAsync();
+
+            int seed = 1;
+            foreach (var player in allPlayersInTournament)
+            {
+                player.Seed = seed;
+                _logger.LogInformation(
+                    "Assigned Seed {Seed} to Player {PlayerId} (SkillLevel: {SkillLevel})",
+                    seed, player.Id, player.SkillLevel ?? 0);
+                seed++;
+            }
+
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("Apply completed. Updated {Count}/{Total} players",
-                updatedCount, toApply.Count);
+            _logger.LogInformation(
+                "Apply completed. Updated {UpdatedCount} players, Recalculated {TotalCount} seeds",
+                updatedCount, allPlayersInTournament.Count);
 
             return updatedCount;
         }
