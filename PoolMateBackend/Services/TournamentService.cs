@@ -60,6 +60,19 @@ public class TournamentService : ITournamentService
 
     public async Task<int?> CreateAsync(string ownerUserId, CreateTournamentModel m, CancellationToken ct)
     {
+        var isMulti = m.IsMultiStage ?? false;
+        if (isMulti)
+        {
+            if (!m.AdvanceToStage2Count.HasValue || m.AdvanceToStage2Count <= 0)
+                throw new InvalidOperationException("AdvanceToStage2Count is required for multi-stage.");
+
+            var adv = m.AdvanceToStage2Count.Value;
+            if ((adv & (adv - 1)) != 0)
+                throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2 (2,4,8,16,...)");
+        }
+        var stage1Type = m.Stage1Type ?? m.BracketType ?? BracketType.DoubleElimination;
+        var stage1Ordering = m.Stage1Ordering ?? m.BracketOrdering ?? BracketOrdering.Random;
+        var stage2Ordering = m.Stage2Ordering ?? BracketOrdering.Random;
         var t = new Tournament
         {
             Name = m.Name.Trim(),
@@ -82,16 +95,23 @@ public class TournamentService : ITournamentService
             PayoutTemplateId = m.PayoutTemplateId,
             TotalPrize = m.TotalPrize, // Custom
 
-            // settings (enum + rule)
+            // game settings 
             PlayerType = m.PlayerType ?? PlayerType.Singles,
-            BracketType = m.BracketType ?? BracketType.DoubleElimination,
             GameType = m.GameType ?? GameType.NineBall,
-            BracketOrdering = m.BracketOrdering ?? BracketOrdering.Random,
+            Rule = m.Rule ?? Rule.WNT,
+            BreakFormat = m.BreakFormat ?? BreakFormat.WinnerBreak,
+
+            // multi-stage
+            IsMultiStage = isMulti,
+            AdvanceToStage2Count = isMulti ? m.AdvanceToStage2Count : null,
+            Stage1Ordering = stage1Ordering,
+            Stage2Ordering = stage2Ordering,
+
+            BracketType = stage1Type,
+            BracketOrdering = stage1Ordering,
             WinnersRaceTo = m.WinnersRaceTo,
             LosersRaceTo = m.LosersRaceTo,
             FinalsRaceTo = m.FinalsRaceTo,
-            Rule = m.Rule ?? Rule.WNT,
-            BreakFormat = m.BreakFormat ?? BreakFormat.WinnerBreak
         };
 
         ApplyPayout(t);
@@ -112,10 +132,10 @@ public class TournamentService : ITournamentService
         if (m.StartUtc.HasValue) t.StartUtc = m.StartUtc.Value;
         if (m.EndUtc.HasValue) t.EndUtc = m.EndUtc.Value;
         if (m.VenueId.HasValue) t.VenueId = m.VenueId.Value;
-
         if (m.IsPublic.HasValue) t.IsPublic = m.IsPublic.Value;
-        if (m.OnlineRegistrationEnabled.HasValue)
-            t.OnlineRegistrationEnabled = m.OnlineRegistrationEnabled.Value;
+        if (m.OnlineRegistrationEnabled.HasValue) t.OnlineRegistrationEnabled = m.OnlineRegistrationEnabled.Value;
+
+        bool canEditBracket = !t.IsStarted && t.Status != TournamentStatus.InProgress && t.Status != TournamentStatus.Completed;
 
         if (m.BracketSizeEstimate.HasValue)
         {
@@ -123,34 +143,51 @@ public class TournamentService : ITournamentService
                 .CountAsync(x => x.TournamentId == id, ct);
 
             if (m.BracketSizeEstimate.Value < currentPlayerCount)
-            {
-                throw new InvalidOperationException(
-                    $"Cannot reduce bracket size to {m.BracketSizeEstimate.Value}. " +
-                    $"Tournament currently has {currentPlayerCount} players registered.");
-            }
+                throw new InvalidOperationException($"Cannot reduce bracket size to {m.BracketSizeEstimate.Value}. Tournament currently has {currentPlayerCount} players registered.");
 
-            t.BracketSizeEstimate = m.BracketSizeEstimate.Value;
+            if (canEditBracket) t.BracketSizeEstimate = m.BracketSizeEstimate.Value;
         }
 
-        // ------- settings (enum + rule) -------
+        //game settings
         if (m.PlayerType.HasValue) t.PlayerType = m.PlayerType.Value;
-        if (m.BracketType.HasValue) t.BracketType = m.BracketType.Value;
         if (m.GameType.HasValue) t.GameType = m.GameType.Value;
-        if (m.BracketOrdering.HasValue) t.BracketOrdering = m.BracketOrdering.Value;
-
-        if (m.WinnersRaceTo.HasValue) t.WinnersRaceTo = m.WinnersRaceTo.Value;
-        if (m.LosersRaceTo.HasValue) t.LosersRaceTo = m.LosersRaceTo.Value;
-        if (m.FinalsRaceTo.HasValue) t.FinalsRaceTo = m.FinalsRaceTo.Value;
-
         if (m.Rule.HasValue) t.Rule = m.Rule.Value;
         if (m.BreakFormat.HasValue) t.BreakFormat = m.BreakFormat.Value;
 
-        // ------- fees -------
+
+        if (canEditBracket)
+        {
+            // IsMultiStage
+            if (m.IsMultiStage.HasValue) t.IsMultiStage = m.IsMultiStage.Value;
+
+            // Stage 1 type / ordering
+            if (m.Stage1Type.HasValue) t.BracketType = m.Stage1Type.Value;
+            if (m.Stage1Ordering.HasValue)
+            {
+                t.Stage1Ordering = m.Stage1Ordering.Value;
+                t.BracketOrdering = m.Stage1Ordering.Value;
+            }
+
+            if (m.Stage2Ordering.HasValue) t.Stage2Ordering = m.Stage2Ordering.Value;
+
+            // Advance count (power-of-two)
+            if (m.AdvanceToStage2Count.HasValue)
+            {
+                var adv = m.AdvanceToStage2Count.Value;
+                if (adv <= 0 || (adv & (adv - 1)) != 0)
+                    throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2.");
+                t.AdvanceToStage2Count = adv;
+            }
+
+            if (m.WinnersRaceTo.HasValue) t.WinnersRaceTo = m.WinnersRaceTo.Value;
+            if (m.LosersRaceTo.HasValue) t.LosersRaceTo = m.LosersRaceTo.Value;
+            if (m.FinalsRaceTo.HasValue) t.FinalsRaceTo = m.FinalsRaceTo.Value;
+        }
+
         if (m.EntryFee.HasValue) t.EntryFee = m.EntryFee.Value;
         if (m.AdminFee.HasValue) t.AdminFee = m.AdminFee.Value;
         if (m.AddedMoney.HasValue) t.AddedMoney = m.AddedMoney.Value;
 
-        // ------- payout mode/template -------
         if (m.PayoutMode.HasValue) t.PayoutMode = m.PayoutMode.Value;
         if (m.PayoutTemplateId.HasValue) t.PayoutTemplateId = m.PayoutTemplateId.Value;
 
@@ -163,7 +200,6 @@ public class TournamentService : ITournamentService
         await _db.SaveChangesAsync(ct);
         return true;
     }
-
 
     public async Task<bool> UpdateFlyerAsync(int id, string ownerUserId, UpdateFlyerModel m, CancellationToken ct)
     {
@@ -261,8 +297,6 @@ public class TournamentService : ITournamentService
 
         return PagingList<UserTournamentListDto>.Create(items, totalRecords, pageIndex, pageSize);
     }
-
-
 
     public async Task<PayoutPreviewResponse> PreviewPayoutAsync(PreviewPayoutRequest m, CancellationToken ct)
     {
@@ -1016,6 +1050,6 @@ public class TournamentService : ITournamentService
 
         await _db.SaveChangesAsync(ct);
         return true;
-    } 
+    }
 
 }
