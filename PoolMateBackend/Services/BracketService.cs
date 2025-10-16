@@ -158,14 +158,16 @@ namespace PoolMate.Api.Services
             var seeded = players.Where(p => p.Seed.HasValue).OrderBy(p => p.Seed!.Value).ToList();
             var unseeded = players.Where(p => !p.Seed.HasValue).ToList();
 
-            FisherYates(unseeded);
+                FisherYates(unseeded);
 
             var seedSlots = TennisSeedPositions(size);
             for (int i = 0; i < seeded.Count && i < size; i++)
                 slots[seedSlots[i]] = seeded[i];
 
+            // lấp phần còn lại bằng unseeded (Random hoặc Seeded nhưng không có seed)
             int u = 0;
             for (int i = 0; i < size; i++)
+            {
                 if (slots[i] is null)
                     slots[i] = (u < unseeded.Count) ? unseeded[u++] : null;
 
@@ -329,11 +331,11 @@ namespace PoolMate.Api.Services
             var positions = new List<int> { 0, n - 1 };
             int block = n;
             while (positions.Count < n)
-            {
+        {
                 block /= 2;
                 var next = new List<int>(positions.Count * 2);
                 foreach (var p in positions)
-                {
+            {
                     next.Add(p);
                     next.Add(p + block);
                 }
