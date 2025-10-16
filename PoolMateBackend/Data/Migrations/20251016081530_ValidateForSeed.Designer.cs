@@ -12,7 +12,7 @@ using PoolMate.Api.Data;
 namespace PoolMate.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20251016144559_ValidateForSeed")]
+    [Migration("20251016081530_ValidateForSeed")]
     partial class ValidateForSeed
     {
         /// <inheritdoc />
