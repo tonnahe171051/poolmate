@@ -15,7 +15,12 @@ namespace PoolMate.Api.Controllers;
 public class TournamentsController : ControllerBase
 {
     private readonly ITournamentService _svc;
-    public TournamentsController(ITournamentService svc) => _svc = svc;
+    private readonly IBracketService _bracket;
+    public TournamentsController(ITournamentService svc, IBracketService bracket)
+    {
+        _svc = svc;
+        _bracket = bracket;
+    }
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateTournamentModel m, CancellationToken ct)
@@ -435,5 +440,21 @@ public class TournamentsController : ControllerBase
             return BadRequest(new { message = ex.Message });
         }
     }
+
+    // Controllers/TournamentsController.cs
+    [HttpGet("{id}/bracket/preview")]
+    public async Task<ActionResult<BracketPreviewDto>> PreviewBracket(int id, CancellationToken ct)
+    {
+        var dto = await _bracket.PreviewAsync(id, ct);
+        return Ok(dto);
+    }
+
+    [HttpPost("{id}/bracket/create")]
+    public async Task<IActionResult> CreateBracket(int id, CancellationToken ct)
+    {
+        await _bracket.CreateAsync(id, ct);
+        return NoContent();
+    }
+
 
 }

@@ -60,6 +60,25 @@ public class TournamentService : ITournamentService
 
     private static bool CanEditBracket(Tournament t)
     => !(t.IsStarted || t.Status == TournamentStatus.InProgress || t.Status == TournamentStatus.Completed);
+
+    private async Task ValidateSeedAsync(int tournamentId, int? seed, int? excludeTpId, CancellationToken ct)
+    {
+        if (!seed.HasValue) return;
+
+        if (seed.Value <= 0)
+            throw new InvalidOperationException("Seed must be a positive number.");
+
+        var existingPlayer = await _db.TournamentPlayers
+            .Where(x => x.TournamentId == tournamentId &&
+                       x.Seed == seed.Value &&
+                       (excludeTpId == null || x.Id != excludeTpId))
+            .FirstOrDefaultAsync(ct);
+
+        if (existingPlayer != null)
+        {
+            throw new InvalidOperationException($"Seed {seed.Value} is already assigned to player '{existingPlayer.DisplayName}' in this tournament.");
+        }
+    }
     // end helpers
 
     public async Task<int?> CreateAsync(string ownerUserId, CreateTournamentModel m, CancellationToken ct)
@@ -316,14 +335,12 @@ public class TournamentService : ITournamentService
             return resp;
         }
 
-        //Template: tính total
+        //Template
         var total = ComputeTotal(m.Players, m.EntryFee, m.AdminFee, m.AddedMoney);
         resp.Total = total;
 
-        // Nếu không có templateId thì chỉ trả total
         if (!m.PayoutTemplateId.HasValue) return resp;
 
-        //Lấy template và parse %
         var tpl = await _db.PayoutTemplates.AsNoTracking()
                    .FirstOrDefaultAsync(x => x.Id == m.PayoutTemplateId.Value, ct);
         if (tpl is null) return resp;
@@ -340,7 +357,7 @@ public class TournamentService : ITournamentService
             });
         }
 
-        // Bù sai số do round (nếu có) 
+        // lam tron
         var sum = resp.Breakdown.Sum(x => x.Amount);
         if (resp.Breakdown.Count > 0 && sum != total)
         {
@@ -463,6 +480,8 @@ public class TournamentService : ITournamentService
                 .AnyAsync(x => x.TournamentId == tournamentId && x.PlayerId == m.PlayerId, ct);
             if (exists) throw new InvalidOperationException("This player is already in the tournament.");
         }
+
+        await ValidateSeedAsync(tournamentId, m.Seed, null, ct);
 
         var tp = new TournamentPlayer
         {
@@ -732,6 +751,11 @@ public class TournamentService : ITournamentService
         if (!CanEditBracket(t))
         {
             throw new InvalidOperationException("Cannot modify players after tournament has started or completed.");
+        }
+
+        if (m.Seed != tp.Seed)
+        {
+            await ValidateSeedAsync(tournamentId, m.Seed, tpId, ct);
         }
 
         if (!string.IsNullOrWhiteSpace(m.DisplayName))

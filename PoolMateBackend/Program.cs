@@ -152,6 +152,8 @@ builder.Services.AddScoped<IVenueService, VenueService>();
 
 builder.Services.AddScoped<IAuthService, AuthService>();
 
+builder.Services.AddScoped<IBracketService, BracketService>();
+
 
 
 // Cloudinary
