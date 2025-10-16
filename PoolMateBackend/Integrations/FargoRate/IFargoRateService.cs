@@ -5,6 +5,6 @@ namespace PoolMate.Api.Integrations.FargoRate
     public interface IFargoRateService
     {
         Task<List<PlayerFargoSearchResult>> BatchSearchPlayersAsync(List<BatchSearchRequest> requests);
-        Task<int> ApplyFargoRatingsAsync(List<ApplyFargoRatingRequest> requests);
+        Task<int> ApplyFargoRatingsAsync(int tournamentId, List<ApplyFargoRatingRequest> requests);
     }
 }

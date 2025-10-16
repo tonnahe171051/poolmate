@@ -28,30 +28,29 @@ namespace PoolMate.Api.Controllers
 
         [HttpPost("apply")]
         public async Task<ActionResult> ApplyFargoRatings(
-            [FromBody] List<ApplyFargoRatingRequest> requests)
+        [FromBody] ApplyFargoRatingsDto dto)
         {
-            if (requests == null || !requests.Any())
+            if (dto.Requests == null || !dto.Requests.Any())
             {
                 return BadRequest(new { message = "Request list cannot be empty" });
             }
 
-            _logger.LogInformation("Apply ratings requested for {Count} players", requests.Count);
-
             try
             {
-                var updatedCount = await _fargoRateService.ApplyFargoRatingsAsync(requests);
+                var updatedCount = await _fargoRateService.ApplyFargoRatingsAsync(
+                    dto.TournamentId,
+                    dto.Requests);
 
                 return Ok(new
                 {
-                    message = "Fargo ratings applied successfully",
-                    updatedCount = updatedCount,
-                    totalRequests = requests.Count
+                    message = "Fargo ratings applied and seeds recalculated",
+                    updatedCount = updatedCount
                 });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error applying Fargo ratings");
-                return StatusCode(500, new { message = "An error occurred while applying ratings" });
+                return StatusCode(500, new { message = ex.Message });
             }
         }
     }
