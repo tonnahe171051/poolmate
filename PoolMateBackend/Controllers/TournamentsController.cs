@@ -15,15 +15,27 @@ namespace PoolMate.Api.Controllers;
 public class TournamentsController : ControllerBase
 {
     private readonly ITournamentService _svc;
-    public TournamentsController(ITournamentService svc) => _svc = svc;
+    private readonly IBracketService _bracket;
+    public TournamentsController(ITournamentService svc, IBracketService bracket)
+    {
+        _svc = svc;
+        _bracket = bracket;
+    }
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateTournamentModel m, CancellationToken ct)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var id = await _svc.CreateAsync(userId, m, ct);
-        if (id is null) return BadRequest(new { message = "Create failed" });
-        return Ok(new { id });
+        try
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var id = await _svc.CreateAsync(userId, m, ct);
+            if (id is null) return BadRequest(new { message = "Create failed" });
+            return Ok(new { id });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpGet("my-tournaments")]
@@ -53,9 +65,16 @@ public class TournamentsController : ControllerBase
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateTournamentModel m, CancellationToken ct)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var ok = await _svc.UpdateAsync(id, userId, m, ct);
-        return ok ? Ok(new { id }) : Forbid();
+        try
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var ok = await _svc.UpdateAsync(id, userId, m, ct);
+            return ok ? Ok(new { id }) : Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPatch("{id:int}/flyer")]
@@ -117,32 +136,38 @@ public class TournamentsController : ControllerBase
 
     [HttpPost("{id}/players")]
     public async Task<IActionResult> AddPlayer(
-        int id,
-        [FromBody] AddTournamentPlayerModel model,
-        CancellationToken ct)
+    int id,
+    [FromBody] AddTournamentPlayerModel model,
+    CancellationToken ct)
     {
-        if (model.Phone != null && model.Phone != "")
+        try
         {
-            if (model.Phone.Trim().Length == 0)
-                return BadRequest(new { message = "Phone number cannot be only whitespace." });
+            if (model.Phone != null && model.Phone != "")
+            {
+                if (model.Phone.Trim().Length == 0)
+                    return BadRequest(new { message = "Phone number cannot be only whitespace." });
 
-            var phone = model.Phone.Trim();
-            if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
-                return BadRequest(new { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+                var phone = model.Phone.Trim();
+                if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
+                    return BadRequest(new { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
 
-            model.Phone = phone;
+                model.Phone = phone;
+            }
+
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+            var tp = await _svc.AddTournamentPlayerAsync(id, userId, model, ct);
+            if (tp is null) return NotFound(new { message = "Tournament not found or not owned by you." });
+
+            return Ok(new { id = tp.Id });
         }
-
-        //validation from data annotations
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-
-        var tp = await _svc.AddTournamentPlayerAsync(id, userId, model, ct);
-        if (tp is null) return NotFound(new { message = "Tournament not found or not owned by you." });
-
-        return Ok(new { id = tp.Id });
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("{id}/players/bulk-lines")]
@@ -151,9 +176,20 @@ public class TournamentsController : ControllerBase
     [FromBody] AddTournamentPlayersPerLineModel model,
     CancellationToken ct)
     {
-        var ownerUserId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var resp = await _svc.BulkAddPlayersPerLineAsync(id, ownerUserId, model, ct);
-        return Ok(resp);
+        try
+        {
+            var ownerUserId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var resp = await _svc.BulkAddPlayersPerLineAsync(id, ownerUserId, model, ct);
+            return Ok(resp);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
     }
 
     [HttpGet("players/search")]
@@ -208,28 +244,35 @@ public class TournamentsController : ControllerBase
     [FromBody] UpdateTournamentPlayerModel model,
     CancellationToken ct)
     {
-        if (model.Phone != null && model.Phone != "")
+        try
         {
-            if (model.Phone.Trim().Length == 0)
-                return BadRequest(new { message = "Phone number cannot be only whitespace." });
+            if (model.Phone != null && model.Phone != "")
+            {
+                if (model.Phone.Trim().Length == 0)
+                    return BadRequest(new { message = "Phone number cannot be only whitespace." });
 
-            var phone = model.Phone.Trim();
-            if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
-                return BadRequest(new { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+                var phone = model.Phone.Trim();
+                if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
+                    return BadRequest(new { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
 
-            model.Phone = phone;
+                model.Phone = phone;
+            }
+
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var success = await _svc.UpdateTournamentPlayerAsync(tournamentId, tpId, userId, model, ct);
+
+            if (!success)
+                return NotFound(new { message = "Tournament player not found or you don't have permission." });
+
+            return Ok(new { message = "Tournament player updated successfully." });
         }
-
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var success = await _svc.UpdateTournamentPlayerAsync(tournamentId, tpId, userId, model, ct);
-
-        if (!success)
-            return NotFound(new { message = "Tournament player not found or you don't have permission." });
-
-        return Ok(new { message = "Tournament player updated successfully." });
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("{id}/tables")]
@@ -308,30 +351,35 @@ public class TournamentsController : ControllerBase
         });
     }
 
-    // Thêm vào TournamentsController.cs
-
     [HttpDelete("{tournamentId}/tables")]
     public async Task<IActionResult> DeleteTables(
         int tournamentId,
         [FromBody] DeleteTablesModel model,
         CancellationToken ct)
     {
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-
-        var result = await _svc.DeleteTournamentTablesAsync(tournamentId, userId, model, ct);
-        if (result is null)
-            return NotFound(new { message = "Tournament not found or not owned by you." });
-
-        return Ok(new
+        try
         {
-            deletedCount = result.DeletedCount,
-            deletedIds = result.DeletedIds,
-            failed = result.Failed,
-            message = $"Successfully deleted {result.DeletedCount} table(s)."
-        });
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+            var result = await _svc.DeleteTournamentTablesAsync(tournamentId, userId, model, ct);
+            if (result is null)
+                return NotFound(new { message = "Tournament not found or not owned by you." });
+
+            return Ok(new
+            {
+                deletedCount = result.DeletedCount,
+                deletedIds = result.DeletedIds,
+                failed = result.Failed,
+                message = $"Successfully deleted {result.DeletedCount} table(s)."
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpGet("{id}/tables")]
@@ -345,37 +393,68 @@ public class TournamentsController : ControllerBase
 
     [HttpDelete("{tournamentId}/players")]
     public async Task<IActionResult> DeletePlayers(
-        int tournamentId,
-        [FromBody] DeletePlayersModel model,
-        CancellationToken ct)
+    int tournamentId,
+    [FromBody] DeletePlayersModel model,
+    CancellationToken ct)
     {
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-
-        var result = await _svc.DeleteTournamentPlayersAsync(tournamentId, userId, model, ct);
-        if (result is null)
-            return NotFound(new { message = "Tournament not found or not owned by you." });
-
-        return Ok(new
+        try
         {
-            deletedCount = result.DeletedCount,
-            deletedIds = result.DeletedIds,
-            failed = result.Failed,
-            message = $"Successfully deleted {result.DeletedCount} player(s)."
-        });
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+            var result = await _svc.DeleteTournamentPlayersAsync(tournamentId, userId, model, ct);
+            if (result is null)
+                return NotFound(new { message = "Tournament not found or not owned by you." });
+
+            return Ok(new
+            {
+                deletedCount = result.DeletedCount,
+                deletedIds = result.DeletedIds,
+                failed = result.Failed,
+                message = $"Successfully deleted {result.DeletedCount} player(s)."
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
+
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> DeleteTournament(int id, CancellationToken ct)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var success = await _svc.DeleteTournamentAsync(id, userId, ct);
+        try
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var success = await _svc.DeleteTournamentAsync(id, userId, ct);
 
-        if (!success)
-            return NotFound(new { message = "Tournament not found or you don't have permission to delete it." });
+            if (!success)
+                return NotFound(new { message = "Tournament not found or you don't have permission to delete it." });
 
-        return Ok(new { message = "Tournament deleted successfully." });
+            return Ok(new { message = "Tournament deleted successfully." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
+
+    // Controllers/TournamentsController.cs
+    [HttpGet("{id}/bracket/preview")]
+    public async Task<ActionResult<BracketPreviewDto>> PreviewBracket(int id, CancellationToken ct)
+    {
+        var dto = await _bracket.PreviewAsync(id, ct);
+        return Ok(dto);
+    }
+
+    [HttpPost("{id}/bracket/create")]
+    public async Task<IActionResult> CreateBracket(int id, CancellationToken ct)
+    {
+        await _bracket.CreateAsync(id, ct);
+        return NoContent();
+    }
+
 
 }

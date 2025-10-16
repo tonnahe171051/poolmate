@@ -120,6 +120,10 @@ namespace PoolMate.Api.Data
                 .IsUnique()
                 .HasFilter("[PlayerId] IS NOT NULL");
             tp.Property(x => x.DisplayName).IsRequired().HasMaxLength(200);
+            tp.HasIndex(x => new { x.TournamentId, x.Seed })
+                .IsUnique()
+                .HasFilter("[Seed] IS NOT NULL")
+                .HasDatabaseName("IX_TournamentPlayer_TournamentId_Seed_Unique");
 
             //index for faster search
             tp.HasIndex(x => x.TournamentId);

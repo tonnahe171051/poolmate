@@ -1,7 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using PoolMate.Api.Models;
 
-
 namespace PoolMate.Api.Dtos.Tournament;
 
 public class CreateTournamentModel
@@ -9,14 +8,12 @@ public class CreateTournamentModel
     [Required, MaxLength(200)]
     public string Name { get; set; } = default!;
 
-    // Thời gian dự kiến
     public DateTime StartUtc { get; set; } = DateTime.UtcNow;
     public DateTime? EndUtc { get; set; }
 
     // Venue (nullable)
     public int? VenueId { get; set; }
 
-    // Hiển thị & đăng ký
     public bool IsPublic { get; set; } = false;
     public bool OnlineRegistrationEnabled { get; set; } = false;
     [Required]
@@ -40,9 +37,16 @@ public class CreateTournamentModel
     public decimal? AddedMoney { get; set; }
 
     // Payout mode
-    public PayoutMode? PayoutMode { get; set; }      // default Template nếu null
-    public int? PayoutTemplateId { get; set; }       // optional (để sau nếu cần breakdown)
+    public PayoutMode? PayoutMode { get; set; }      
+    public int? PayoutTemplateId { get; set; }       
 
-    // Chỉ có nghĩa khi Custom
+    // for Custom
     public decimal? TotalPrize { get; set; }
+
+    //multi stage
+    public bool? IsMultiStage { get; set; } = false;
+    public int? AdvanceToStage2Count { get; set; }
+    public BracketType? Stage1Type { get; set; }
+    public BracketOrdering? Stage1Ordering { get; set; }
+    public BracketOrdering? Stage2Ordering { get; set; }
 }
