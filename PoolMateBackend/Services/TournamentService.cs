@@ -836,11 +836,6 @@ public class TournamentService : ITournamentService
             .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
         if (t is null || t.OwnerUserId != ownerUserId) return false;
 
-        if (!CanEditBracket(t))
-        {
-            throw new InvalidOperationException("Cannot delete tables after tournament has started or completed.");
-        }
-
         var table = await _db.TournamentTables
             .FirstOrDefaultAsync(x => x.Id == tableId && x.TournamentId == tournamentId, ct);
         if (table is null) return false;
@@ -875,6 +870,11 @@ public class TournamentService : ITournamentService
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
         if (t is null || t.OwnerUserId != ownerUserId) return null;
+
+        if (!CanEditBracket(t))
+        {
+            throw new InvalidOperationException("Cannot delete tables after tournament has started or completed.");
+        }
 
         var result = new DeleteTablesResult();
 
@@ -1050,36 +1050,37 @@ public class TournamentService : ITournamentService
         if (tournament is null || tournament.OwnerUserId != ownerUserId)
             return false;
 
-        // Delete tournament players
-        var tournamentPlayers = await _db.TournamentPlayers
-            .Where(x => x.TournamentId == id)
-            .ToListAsync(ct);
+        var canDelete = tournament.Status == TournamentStatus.Upcoming ||
+                        tournament.Status == TournamentStatus.Completed;
 
-        if (tournamentPlayers.Count > 0)
+        if (!canDelete)
         {
-            _db.TournamentPlayers.RemoveRange(tournamentPlayers);
+            throw new InvalidOperationException("Tournament can only be deleted before it starts or after it's completed.");
         }
 
-        // Delete tournament tables
-        var tournamentTables = await _db.TournamentTables
+        var deleteMatchesTask = _db.Matches
             .Where(x => x.TournamentId == id)
-            .ToListAsync(ct);
+            .ExecuteDeleteAsync(ct);
 
-        if (tournamentTables.Count > 0)
-        {
-            _db.TournamentTables.RemoveRange(tournamentTables);
-        }
-
-        // Delete flyer from Cloudinary if exists
+        // handle parallel flyer deletion
+        Task? deleteFlyerTask = null;
         if (!string.IsNullOrEmpty(tournament.FlyerPublicId))
         {
-            await _cloud.DeleteAsync(tournament.FlyerPublicId);
+            deleteFlyerTask = _cloud.DeleteAsync(tournament.FlyerPublicId);
+        }
+
+        await deleteMatchesTask;
+        if (deleteFlyerTask != null)
+        {
+            await deleteFlyerTask;
         }
 
         _db.Tournaments.Remove(tournament);
-
         await _db.SaveChangesAsync(ct);
+
         return true;
     }
+
+
 
 }
