@@ -163,74 +163,39 @@ namespace PoolMate.Api.Integrations.FargoRate
 
         public async Task<int> ApplyFargoRatingsAsync(int tournamentId, List<ApplyFargoRatingRequest> requests)
         {
-            if (requests == null || !requests.Any())
-            {
-                _logger.LogWarning("ApplyFargoRatingsAsync called with empty request list");
-                return 0;
-            }
-
-            _logger.LogInformation("Starting apply Fargo ratings for tournament {TournamentId}, {Count} requests",
-                tournamentId, requests.Count);
-
             var toApply = requests.Where(r => r.Apply && r.Rating.HasValue).ToList();
+            if (!toApply.Any()) return 0;
 
-            if (!toApply.Any())
-            {
-                _logger.LogInformation("No ratings to apply (all skipped or invalid)");
-                return 0;
-            }
-
+            // Update SkillLevel
             var playerIds = toApply.Select(r => r.TournamentPlayerId).ToList();
             var playersToUpdate = await _dbContext.TournamentPlayers
                 .Where(p => playerIds.Contains(p.Id))
                 .ToListAsync();
 
-            int updatedCount = 0;
-
             foreach (var request in toApply)
             {
                 var player = playersToUpdate.FirstOrDefault(p => p.Id == request.TournamentPlayerId);
-
                 if (player != null)
                 {
                     player.SkillLevel = request.Rating.Value;
-                    updatedCount++;
-
-                    _logger.LogInformation(
-                        "Updated player {PlayerId}: SkillLevel={Rating}",
-                        player.Id, request.Rating.Value);
-                }
-                else
-                {
-                    _logger.LogWarning("Player {PlayerId} not found in database", request.TournamentPlayerId);
                 }
             }
 
-            _logger.LogInformation("Recalculating seeds for all players in tournament {TournamentId}", tournamentId);
-
-            var allPlayersInTournament = await _dbContext.TournamentPlayers
+            // Lấy tất cả players
+            var allPlayers = await _dbContext.TournamentPlayers
                 .Where(p => p.TournamentId == tournamentId)
-                .OrderByDescending(p => p.SkillLevel ?? 0) 
-                .ThenBy(p => p.Id) // neu skill level giong nhau, sap xep theo Id
                 .ToListAsync();
 
+            foreach (var p in allPlayers) p.Seed = null;
+            await _dbContext.SaveChangesAsync();
+
+            var sorted = allPlayers.OrderByDescending(p => p.SkillLevel ?? 0).ToList();
             int seed = 1;
-            foreach (var player in allPlayersInTournament)
-            {
-                player.Seed = seed;
-                _logger.LogInformation(
-                    "Assigned Seed {Seed} to Player {PlayerId} (SkillLevel: {SkillLevel})",
-                    seed, player.Id, player.SkillLevel ?? 0);
-                seed++;
-            }
+            foreach (var p in sorted) p.Seed = seed++;
 
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation(
-                "Apply completed. Updated {UpdatedCount} players, Recalculated {TotalCount} seeds",
-                updatedCount, allPlayersInTournament.Count);
-
-            return updatedCount;
+            return toApply.Count;
         }
     }
 }
