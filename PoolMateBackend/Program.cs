@@ -10,7 +10,6 @@ using PoolMate.Api.Integrations.Email;
 using PoolMate.Api.Integrations.FargoRate;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
-using System;
 using System.Text;
 using System.Text.Json.Serialization;
 
@@ -172,6 +171,9 @@ builder.Services.Configure<CloudinaryOptions>(
 
 builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
 builder.Services.AddScoped<IProfileService, ProfileService>();
+
+// Dashboard Data Seeder (for testing)
+builder.Services.AddScoped<DashboardDataSeeder>();
 
 var app = builder.Build();
 
