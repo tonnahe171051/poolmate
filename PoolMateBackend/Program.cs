@@ -1,4 +1,4 @@
-﻿using CloudinaryDotNet;
+﻿﻿﻿using CloudinaryDotNet;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -153,7 +153,7 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 
 builder.Services.AddScoped<IBracketService, BracketService>();
 
-
+builder.Services.AddScoped<IAdminUserService, AdminUserService>();
 
 // Cloudinary
 builder.Services.AddSingleton(sp =>
