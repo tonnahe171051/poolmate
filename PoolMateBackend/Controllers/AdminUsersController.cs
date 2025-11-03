@@ -64,23 +64,44 @@ public class AdminUsersController : ControllerBase
     }
 
     /// <summary>
-    /// DELETE: api/admin/users/{id}
-    /// Xóa user khỏi hệ thống
+    /// PUT: api/admin/users/{id}/deactivate
+    /// Vô hiệu hóa tài khoản user (lock vĩnh viễn)
+    /// User sẽ không thể đăng nhập nhưng dữ liệu vẫn được giữ lại
     /// </summary>
-    [HttpDelete("{id}")]
+    [HttpPut("{id}/deactivate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> DeleteUser(string id, CancellationToken ct)
+    public async Task<IActionResult> DeactivateUser(string id, CancellationToken ct)
     {
-        var response = await _userService.DeleteUserAsync(id, ct);
+        var response = await _userService.DeactivateUserAsync(id, ct);
         
         if (!response.Success)
         {
-            return NotFound(new { message = response.Message });
+            return BadRequest(new { message = response.Message });
+        }
+
+        return Ok(response.Data);
+    }
+
+    /// <summary>
+    /// PUT: api/admin/users/{id}/reactivate
+    /// Kích hoạt lại tài khoản đã bị deactivate
+    /// User sẽ có thể đăng nhập lại
+    /// </summary>
+    [HttpPut("{id}/reactivate")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ReactivateUser(string id, CancellationToken ct)
+    {
+        var response = await _userService.ReactivateUserAsync(id, ct);
+        
+        if (!response.Success)
+        {
+            return BadRequest(new { message = response.Message });
         }
 
         return Ok(response.Data);
     }
 }
-

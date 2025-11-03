@@ -11,7 +11,10 @@ public interface IAdminUserService
     /// Lấy chi tiết 1 user cụ thể
     Task<Response> GetUserDetailAsync(string userId, CancellationToken ct);
     
-    /// Xóa user 
-    Task<Response> DeleteUserAsync(string userId, CancellationToken ct);
+    /// Deactivate user (lock account vĩnh viễn)
+    Task<Response> DeactivateUserAsync(string userId, CancellationToken ct);
+    
+    /// Reactivate user (unlock account đã bị deactivate)
+    Task<Response> ReactivateUserAsync(string userId, CancellationToken ct);
 }
 

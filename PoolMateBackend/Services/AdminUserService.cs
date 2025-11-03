@@ -253,9 +253,75 @@ public class AdminUserService : IAdminUserService
     }
 
     /// <summary>
-    /// DELETE USER - Xóa user khỏi hệ thống
+    /// DEACTIVATE USER - Vô hiệu hóa tài khoản user (lock vĩnh viễn)
+    /// Sử dụng LockoutEnd = DateTimeOffset.MaxValue để lock vĩnh viễn
+    /// User không thể login nhưng dữ liệu vẫn được giữ lại trong hệ thống
     /// </summary>
-    public async Task<Response> DeleteUserAsync(string userId, CancellationToken ct)
+    public async Task<Response> DeactivateUserAsync(string userId, CancellationToken ct)
+    {
+        try
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null)
+            {
+                return Response.Error("User not found");
+            }
+            // Kiểm tra user đã bị deactivate chưa
+            if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow)
+            {
+                return Response.Error("User is already deactivated");
+            }
+            // Nếu LockoutEnabled = false → User được bảo vệ (VIP/Admin account)
+            // KHÔNG CHO PHÉP deactivate
+            if (!user.LockoutEnabled)
+            {
+                _logger.LogWarning(
+                    "Attempt to deactivate protected account: User {UserId} ({UserName}) has LockoutEnabled = false. Request denied.",
+                    userId, user.UserName);
+                
+                return Response.Error(
+                    "Cannot deactivate this user. " +
+                    "This is a protected account (VIP/Admin) with lockout protection enabled. " +
+                    "Please contact system administrator if you need to deactivate this account.");
+            }
+
+            // Lấy roles để log
+            var roles = await _userManager.GetRolesAsync(user);
+
+            // Set LockoutEnd = MaxValue (lock vĩnh viễn)
+            user.LockoutEnd = DateTimeOffset.MaxValue;
+
+            var result = await _userManager.UpdateAsync(user);
+            if (!result.Succeeded)
+            {
+                var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+                _logger.LogError("Failed to deactivate user {UserId}: {Errors}", userId, errors);
+                return Response.Error($"Failed to deactivate user: {errors}");
+            }
+            _logger.LogInformation(
+                "User {UserId} ({UserName}, roles: {Roles}) has been deactivated successfully",
+                userId, user.UserName, string.Join(", ", roles));
+
+            return Response.Ok(new
+            {
+                message = "User deactivated successfully",
+                userId = userId,
+                userName = user.UserName,
+                deactivatedAt = DateTimeOffset.UtcNow
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error deactivating user {UserId}", userId);
+            return Response.Error("Error deactivating user");
+        }
+    }
+
+    /// <summary>
+    /// REACTIVATE USER - Kích hoạt lại tài khoản đã bị deactivate
+    /// Xóa lockout để user có thể login lại
+    /// </summary>
+    public async Task<Response> ReactivateUserAsync(string userId, CancellationToken ct)
     {
         try
         {
@@ -266,38 +332,43 @@ public class AdminUserService : IAdminUserService
                 return Response.Error("User not found");
             }
 
-            // Business validation: Không được xóa chính mình
-            // (Cần truyền current user id từ controller nếu muốn check)
+            // Kiểm tra user có đang bị deactivate không
+            if (!user.LockoutEnd.HasValue || user.LockoutEnd.Value <= DateTimeOffset.UtcNow)
+            {
+                return Response.Error("User is not currently deactivated");
+            }
 
             // Lấy roles để log
             var roles = await _userManager.GetRolesAsync(user);
 
-            // Xóa user
-            var result = await _userManager.DeleteAsync(user);
+            // Unlock user: set LockoutEnd = null
+            user.LockoutEnd = null;
+
+            var result = await _userManager.UpdateAsync(user);
 
             if (!result.Succeeded)
             {
                 var errors = string.Join(", ", result.Errors.Select(e => e.Description));
-                _logger.LogError("Failed to delete user {UserId}: {Errors}", userId, errors);
-                return Response.Error($"Failed to delete user: {errors}");
+                _logger.LogError("Failed to reactivate user {UserId}: {Errors}", userId, errors);
+                return Response.Error($"Failed to reactivate user: {errors}");
             }
 
             _logger.LogInformation(
-                "User {UserId} ({UserName}, roles: {Roles}) has been deleted successfully",
+                "User {UserId} ({UserName}, roles: {Roles}) has been reactivated successfully",
                 userId, user.UserName, string.Join(", ", roles));
 
             return Response.Ok(new
             {
-                message = "User deleted successfully",
-                deletedUserId = userId,
-                deletedUserName = user.UserName
+                message = "User reactivated successfully",
+                userId = userId,
+                userName = user.UserName,
+                reactivatedAt = DateTimeOffset.UtcNow
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error deleting user {UserId}", userId);
-            return Response.Error("Error deleting user");
+            _logger.LogError(ex, "Error reactivating user {UserId}", userId);
+            return Response.Error("Error reactivating user");
         }
     }
 }
-
