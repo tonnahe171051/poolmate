@@ -51,25 +51,25 @@ public class AdminUserService : IAdminUserService
                 query = query.Where(u => u.EmailConfirmed == filter.EmailConfirmed.Value);
             }
 
-            // Filter theo PhoneNumberConfirmed
+
             if (filter.PhoneNumberConfirmed.HasValue)
             {
                 query = query.Where(u => u.PhoneNumberConfirmed == filter.PhoneNumberConfirmed.Value);
             }
 
-            // Filter theo TwoFactorEnabled
+
             if (filter.TwoFactorEnabled.HasValue)
             {
                 query = query.Where(u => u.TwoFactorEnabled == filter.TwoFactorEnabled.Value);
             }
 
-            // Filter theo LockoutEnabled
+
             if (filter.LockoutEnabled.HasValue)
             {
                 query = query.Where(u => u.LockoutEnabled == filter.LockoutEnabled.Value);
             }
 
-            // Filter theo IsLockedOut (đang bị lock hay không)
+
             if (filter.IsLockedOut.HasValue)
             {
                 if (filter.IsLockedOut.Value)
@@ -84,19 +84,19 @@ public class AdminUserService : IAdminUserService
                 }
             }
 
-            // Filter theo Country
+
             if (!string.IsNullOrWhiteSpace(filter.Country))
             {
                 query = query.Where(u => u.Country == filter.Country);
             }
 
-            // Filter theo City
+
             if (!string.IsNullOrWhiteSpace(filter.City))
             {
                 query = query.Where(u => u.City == filter.City);
             }
 
-            // Filter theo Date Range (CreatedAt)
+
             if (filter.CreatedFrom.HasValue)
             {
                 query = query.Where(u => u.CreatedAt >= filter.CreatedFrom.Value);
@@ -109,13 +109,13 @@ public class AdminUserService : IAdminUserService
                 query = query.Where(u => u.CreatedAt < toDate);
             }
 
-            // BƯỚC 4: SORTING
+
             query = ApplySorting(query, filter.SortBy, filter.IsDescending);
 
-            // BƯỚC 5: ĐẾM TOTAL (sau khi apply tất cả filters)
+
             var totalRecords = await query.CountAsync(ct);
 
-            // BƯỚC 6: PAGINATION
+
             var pageIndex = filter.PageIndex < 1 ? 1 : filter.PageIndex;
             var pageSize = filter.PageSize < 1 ? 10 : filter.PageSize;
 
@@ -124,7 +124,7 @@ public class AdminUserService : IAdminUserService
                 .Take(pageSize)
                 .ToListAsync(ct);
 
-            // BƯỚC 7: MAP sang DTO và lấy roles
+
             var userDtos = new List<AdminUserListDto>();
             
             foreach (var user in users)
@@ -144,6 +144,9 @@ public class AdminUserService : IAdminUserService
                     Country = user.Country,
                     City = user.City,
                     EmailConfirmed = user.EmailConfirmed,
+                    LockoutEnd = user.LockoutEnd?.DateTime,
+                    IsLockedOut = user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow,
+                    LockoutEnabled = user.LockoutEnabled,
                     CreatedAt = user.CreatedAt,
                     Roles = roles.ToList(),
                     AvatarUrl = user.ProfilePicture

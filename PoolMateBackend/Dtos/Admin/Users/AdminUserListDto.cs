@@ -1,6 +1,5 @@
 namespace PoolMate.Api.Dtos.Admin.Users;
 
-
 public class AdminUserListDto
 {
     public string Id { get; set; } = string.Empty;
@@ -15,11 +14,14 @@ public class AdminUserListDto
     public string? City { get; set; }
     public bool EmailConfirmed { get; set; }
     public DateTime CreatedAt { get; set; }
-    
+
+    public DateTime? LockoutEnd { get; set; }
+    public bool IsLockedOut { get; set; }
+    public bool LockoutEnabled { get; set; }
+
     // Roles
     public List<string> Roles { get; set; } = new();
-    
+
     // Avatar
     public string? AvatarUrl { get; set; }
 }
-
