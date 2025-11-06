@@ -450,10 +450,53 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{id}/bracket/create")]
-    public async Task<IActionResult> CreateBracket(int id, CancellationToken ct)
+    public async Task<IActionResult> CreateBracket(
+        int id,
+        [FromBody] CreateBracketRequest? request,
+        CancellationToken ct)
     {
-        await _bracket.CreateAsync(id, ct);
-        return NoContent();
+        try
+        {
+            await _bracket.CreateAsync(id, request, ct);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+
+    [HttpGet("{id}/bracket")]
+    public async Task<ActionResult<BracketDto>> GetBracket(
+    int id,
+    [FromQuery] BracketFilterType? filterType = null,
+    CancellationToken ct = default)
+    {
+        try
+        {
+            if (filterType == null)
+            {
+                var bracket = await _bracket.GetAsync(id, ct);
+                return Ok(bracket);
+            }
+
+            var filter = new BracketFilterRequest
+            {
+                FilterType = filterType.Value
+            };
+
+            var filteredBracket = await _bracket.GetFilteredAsync(id, filter, ct);
+            return Ok(filteredBracket);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound("Tournament not found");
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
     }
 
 
