@@ -27,5 +27,7 @@
 
     public enum MatchStatus { NotStarted, InProgress, Completed}
 
+    public enum BracketCreationType { Automatic, Manual }
+
 
 }
