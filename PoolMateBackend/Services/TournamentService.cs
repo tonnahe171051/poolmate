@@ -94,17 +94,26 @@ public class TournamentService : ITournamentService
             if ((adv & (adv - 1)) != 0)
                 throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2 (2,4,8,16,...)");
         }
+
+        // ✅ LOGIC MAPPING THEO IsMultiStage
+        BracketType bracketType;
+        BracketOrdering bracketOrdering;
+        BracketOrdering stage2Ordering;
+
+        if (isMulti)
+        {
+            // Multi-stage: Ưu tiên Stage1 fields
+            bracketType = m.Stage1Type ?? m.BracketType ?? BracketType.DoubleElimination;
+            bracketOrdering = m.Stage1Ordering ?? m.BracketOrdering ?? BracketOrdering.Random;
+            stage2Ordering = m.Stage2Ordering ?? BracketOrdering.Random;
+        }
         else
         {
-            if (m.AdvanceToStage2Count.HasValue || m.Stage2Ordering.HasValue)
-            {
-                throw new InvalidOperationException("Cannot set Stage2 settings for single-stage tournaments.");
-            }
+            // Single-stage: Chỉ dùng legacy fields, ignore Stage fields
+            bracketType = m.BracketType ?? BracketType.DoubleElimination;
+            bracketOrdering = m.BracketOrdering ?? BracketOrdering.Random;
+            stage2Ordering = BracketOrdering.Random; // Default for single-stage
         }
-
-        var stage1Type = m.Stage1Type ?? m.BracketType ?? BracketType.DoubleElimination;
-        var stage1Ordering = m.Stage1Ordering ?? m.BracketOrdering ?? BracketOrdering.Random;
-        var stage2Ordering = isMulti ? (m.Stage2Ordering ?? BracketOrdering.Random) : BracketOrdering.Random;
 
         var t = new Tournament
         {
@@ -131,15 +140,15 @@ public class TournamentService : ITournamentService
             Rule = m.Rule ?? Rule.WNT,
             BreakFormat = m.BreakFormat ?? BreakFormat.WinnerBreak,
 
-            // multi-stage settings
+            // ✅ MULTI-STAGE SETTINGS
             IsMultiStage = isMulti,
             AdvanceToStage2Count = isMulti ? m.AdvanceToStage2Count : null,
-            Stage1Ordering = stage1Ordering,
+            Stage1Ordering = bracketOrdering, // Sync with BracketOrdering
             Stage2Ordering = stage2Ordering,
 
-            // bracket settings
-            BracketType = stage1Type,
-            BracketOrdering = stage1Ordering,
+            // ✅ BRACKET SETTINGS
+            BracketType = bracketType,
+            BracketOrdering = bracketOrdering,
             WinnersRaceTo = m.WinnersRaceTo,
             LosersRaceTo = m.LosersRaceTo,
             FinalsRaceTo = m.FinalsRaceTo,
@@ -191,30 +200,84 @@ public class TournamentService : ITournamentService
                 t.BracketSizeEstimate = m.BracketSizeEstimate.Value;
             }
 
+            // ✅ DETERMINE MULTI-STAGE STATUS
             var willBeMulti = m.IsMultiStage ?? t.IsMultiStage;
-            t.IsMultiStage = willBeMulti;
 
-            if (m.Stage1Type.HasValue) t.BracketType = m.Stage1Type.Value;
-            if (m.Stage1Ordering.HasValue)
+            // ✅ VALIDATION: Khi có Stage2 settings nhưng sẽ là single-stage
+            if (!willBeMulti)
             {
-                t.Stage1Ordering = m.Stage1Ordering.Value;
-                t.BracketOrdering = m.Stage1Ordering.Value;
+                // Silent ignore Stage2 settings (không báo lỗi, chỉ bỏ qua)
+                // m.AdvanceToStage2Count và m.Stage2Ordering sẽ được ignore
             }
-
-            if (willBeMulti)
+            else
             {
+                // Validate multi-stage settings
                 if (m.AdvanceToStage2Count.HasValue)
                 {
                     var adv = m.AdvanceToStage2Count.Value;
                     if (adv <= 0 || (adv & (adv - 1)) != 0)
                         throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2.");
-                    t.AdvanceToStage2Count = adv;
                 }
-                if (m.Stage2Ordering.HasValue) t.Stage2Ordering = m.Stage2Ordering.Value;
+            }
+
+            // ✅ UPDATE IsMultiStage
+            t.IsMultiStage = willBeMulti;
+
+            // ✅ BRACKET TYPE: Consistent logic với CreateAsync
+            if (willBeMulti)
+            {
+                // Multi-stage: Priority Stage1Type > BracketType
+                if (m.Stage1Type.HasValue) t.BracketType = m.Stage1Type.Value;
+                else if (m.BracketType.HasValue) t.BracketType = m.BracketType.Value;
             }
             else
             {
+                // Single-stage: Chỉ dùng BracketType, ignore Stage1Type
+                if (m.BracketType.HasValue) t.BracketType = m.BracketType.Value;
+            }
+
+            // ✅ BRACKET ORDERING: Consistent logic với CreateAsync
+            if (willBeMulti)
+            {
+                // Multi-stage: Priority Stage1Ordering > BracketOrdering
+                if (m.Stage1Ordering.HasValue)
+                {
+                    t.Stage1Ordering = m.Stage1Ordering.Value;
+                    t.BracketOrdering = m.Stage1Ordering.Value;
+                }
+                else if (m.BracketOrdering.HasValue)
+                {
+                    t.Stage1Ordering = m.BracketOrdering.Value;
+                    t.BracketOrdering = m.BracketOrdering.Value;
+                }
+            }
+            else
+            {
+                // Single-stage: Chỉ dùng BracketOrdering, ignore Stage1Ordering
+                if (m.BracketOrdering.HasValue)
+                {
+                    t.BracketOrdering = m.BracketOrdering.Value;
+                    t.Stage1Ordering = m.BracketOrdering.Value; // Sync
+                }
+            }
+
+            // ✅ STAGE 2 SETTINGS: Chỉ process khi willBeMulti = true
+            if (willBeMulti)
+            {
+                if (m.AdvanceToStage2Count.HasValue)
+                {
+                    t.AdvanceToStage2Count = m.AdvanceToStage2Count.Value;
+                }
+                if (m.Stage2Ordering.HasValue)
+                {
+                    t.Stage2Ordering = m.Stage2Ordering.Value;
+                }
+            }
+            else
+            {
+                // ✅ CLEANUP: Reset về default khi chuyển về single-stage
                 t.AdvanceToStage2Count = null;
+                t.Stage2Ordering = BracketOrdering.Random;
             }
 
             if (m.WinnersRaceTo.HasValue) t.WinnersRaceTo = m.WinnersRaceTo.Value;
@@ -225,7 +288,6 @@ public class TournamentService : ITournamentService
         await _db.SaveChangesAsync(ct);
         return true;
     }
-
 
     public async Task<bool> UpdateFlyerAsync(int id, string ownerUserId, UpdateFlyerModel m, CancellationToken ct)
     {
