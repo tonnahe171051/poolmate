@@ -23,7 +23,7 @@ namespace PoolMate.Api.Services
 
             var post = new Post
             {
-                Id = postId,
+                Id = postId,    
                 Content = model.Content,
                 ImageUrl = model.ImageUrl,
                 ImagePublicId = model.ImagePublicId,
