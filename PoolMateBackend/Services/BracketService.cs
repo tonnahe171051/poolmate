@@ -486,6 +486,7 @@ namespace PoolMate.Api.Services
             return slots;
         }
 
+
         private StagePreviewDto PreviewSingle(int stageNo, BracketOrdering ordering, List<PlayerSeed?> slots)
         {
             var dto = new StagePreviewDto
@@ -945,6 +946,7 @@ namespace PoolMate.Api.Services
 
             return slots;
         }
+
 
         private sealed record PlayerSeed
         {
