@@ -22,7 +22,14 @@ namespace PoolMate.Api.Services
 
             var players = await _db.TournamentPlayers
                 .Where(x => x.TournamentId == tournamentId)
-                .Select(x => new PlayerSeed { TpId = x.Id, Name = x.DisplayName, Seed = x.Seed })
+                .Select(x => new PlayerSeed
+                {
+                    TpId = x.Id,
+                    Name = x.DisplayName,
+                    Seed = x.Seed,
+                    Country = x.Country,
+                    FargoRating = x.SkillLevel
+                })
                 .ToListAsync(ct);
 
             if (players.Count == 0)
@@ -156,6 +163,7 @@ namespace PoolMate.Api.Services
                 .Include(x => x.Player1Tp)
                 .Include(x => x.Player2Tp)
                 .Include(x => x.WinnerTp)
+                .Include(x => x.Table)
                 .Where(x => x.TournamentId == tournamentId)
                 .OrderBy(x => x.StageId)
                 .ThenBy(x => x.Bracket)
@@ -328,6 +336,13 @@ namespace PoolMate.Api.Services
             bool isBye = (match.Player1TpId == null && match.Player2TpId != null) ||
                          (match.Player1TpId != null && match.Player2TpId == null);
 
+            // ✅ Format scheduled time
+            string? scheduledDisplay = null;
+            if (match.ScheduledUtc.HasValue)
+            {
+                scheduledDisplay = match.ScheduledUtc.Value.ToString("MMM dd, HH:mm\\h");
+            }
+
             return new MatchDto
             {
                 Id = match.Id,
@@ -335,24 +350,39 @@ namespace PoolMate.Api.Services
                 PositionInRound = match.PositionInRound,
                 Bracket = match.Bracket,
                 Status = match.Status,
+
+                // ✅ Enhanced player data with country
                 Player1 = match.Player1Tp != null ? new PlayerDto
                 {
                     TpId = match.Player1Tp.Id,
                     Name = match.Player1Tp.DisplayName,
-                    Seed = match.Player1Tp.Seed
+                    Seed = match.Player1Tp.Seed,
+                    Country = match.Player1Tp.Country, 
+                    FargoRating = match.Player1Tp.SkillLevel 
                 } : null,
                 Player2 = match.Player2Tp != null ? new PlayerDto
                 {
                     TpId = match.Player2Tp.Id,
                     Name = match.Player2Tp.DisplayName,
-                    Seed = match.Player2Tp.Seed
+                    Seed = match.Player2Tp.Seed,
+                    Country = match.Player2Tp.Country, 
+                    FargoRating = match.Player2Tp.SkillLevel
                 } : null,
                 Winner = match.WinnerTp != null ? new PlayerDto
                 {
                     TpId = match.WinnerTp.Id,
                     Name = match.WinnerTp.DisplayName,
-                    Seed = match.WinnerTp.Seed
+                    Seed = match.WinnerTp.Seed,
+                    Country = match.WinnerTp.Country, 
+                    FargoRating = match.WinnerTp.SkillLevel 
                 } : null,
+
+                ScheduledUtc = match.ScheduledUtc,
+                ScheduledDisplay = scheduledDisplay,
+
+                TableId = match.TableId,
+                TableLabel = match.Table?.Label,
+
                 ScoreP1 = match.ScoreP1,
                 ScoreP2 = match.ScoreP2,
                 RaceTo = match.RaceTo,
@@ -510,8 +540,12 @@ namespace PoolMate.Api.Services
                     PositionInRound = i + 1,
                     P1Name = p1?.Name,
                     P1Seed = p1?.Seed,
+                    P1Country = p1?.Country,
                     P2Name = p2?.Name,
-                    P2Seed = p2?.Seed
+                    P2Seed = p2?.Seed,
+                    P2Country = p2?.Country,
+                    P1FargoRating = p1?.FargoRating,
+                    P2FargoRating = p2?.FargoRating
                 });
             }
             dto.Rounds.Add(r1);
@@ -527,7 +561,9 @@ namespace PoolMate.Api.Services
                     {
                         PositionInRound = i + 1,
                         P1Name = null,
-                        P2Name = null
+                        P2Name = null,
+                        P1Country = null,
+                        P2Country = null
                     });
                 }
                 dto.Rounds.Add(r);
@@ -929,7 +965,9 @@ namespace PoolMate.Api.Services
                 {
                     TpId = tp.Id,
                     Name = tp.DisplayName,
-                    Seed = tp.Seed
+                    Seed = tp.Seed,
+                    Country = tp.Country, 
+                    FargoRating = tp.SkillLevel
                 }, ct);
 
             // Assign players to slots
@@ -953,6 +991,8 @@ namespace PoolMate.Api.Services
             public int TpId { get; init; }
             public string Name { get; init; } = default!;
             public int? Seed { get; init; }
+            public string? Country { get; init; }
+            public int? FargoRating { get; init; }
         }
     }
 }
