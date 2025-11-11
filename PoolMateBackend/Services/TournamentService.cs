@@ -1103,6 +1103,13 @@ public class TournamentService : ITournamentService
                 Rule = x.Rule,
                 BreakFormat = x.BreakFormat,
 
+                // ✅ MULTI-STAGE SETTINGS - MISSING!
+                IsMultiStage = x.IsMultiStage,
+                AdvanceToStage2Count = x.AdvanceToStage2Count,
+                Stage1Ordering = x.Stage1Ordering,
+                Stage2Ordering = x.Stage2Ordering,
+
+                // Payout settings
                 EntryFee = x.EntryFee,
                 AdminFee = x.AdminFee,
                 AddedMoney = x.AddedMoney,
@@ -1128,6 +1135,7 @@ public class TournamentService : ITournamentService
 
         return tournament;
     }
+
     public async Task<bool> DeleteTournamentAsync(int id, string ownerUserId, CancellationToken ct)
     {
         var tournament = await _db.Tournaments
