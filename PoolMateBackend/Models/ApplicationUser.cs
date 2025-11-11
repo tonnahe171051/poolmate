@@ -11,5 +11,8 @@ namespace PoolMate.Api.Models
         public string? Country { get; set; }
         public string? ProfilePicture { get; set; }
         public string? AvatarPublicId { get; set; }
+        
+        // Dashboard tracking
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 }
