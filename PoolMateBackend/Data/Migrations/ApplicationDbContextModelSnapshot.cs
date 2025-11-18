@@ -324,7 +324,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("StageId", "Bracket", "RoundNo");
 
-                    b.ToTable("Matches");
+                    b.ToTable("Matches", (string)null);
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.PayoutTemplate", b =>
@@ -357,7 +357,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("MinPlayers", "MaxPlayers", "Places");
 
-                    b.ToTable("PayoutTemplates");
+                    b.ToTable("PayoutTemplates", (string)null);
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Player", b =>
@@ -404,7 +404,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Players");
+                    b.ToTable("Players", (string)null);
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Post", b =>
@@ -443,7 +443,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Posts");
+                    b.ToTable("Posts", (string)null);
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Tournament", b =>
@@ -576,7 +576,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("VenueId");
 
-                    b.ToTable("Tournaments", t =>
+                    b.ToTable("Tournaments", null, t =>
                         {
                             t.HasCheckConstraint("CK_Tournament_Advance_PowerOfTwo", "[AdvanceToStage2Count] IS NULL OR ([AdvanceToStage2Count] > 0 AND ([AdvanceToStage2Count] & ([AdvanceToStage2Count]-1)) = 0)");
                         });
@@ -645,7 +645,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("TournamentId", "Status");
 
-                    b.ToTable("TournamentPlayers");
+                    b.ToTable("TournamentPlayers", (string)null);
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.TournamentStage", b =>
@@ -685,7 +685,7 @@ namespace PoolMate.Api.Data.Migrations
                     b.HasIndex("TournamentId", "StageNo")
                         .IsUnique();
 
-                    b.ToTable("TournamentStages");
+                    b.ToTable("TournamentStages", (string)null);
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.TournamentTable", b =>
@@ -726,7 +726,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("TournamentId");
 
-                    b.ToTable("TournamentTables");
+                    b.ToTable("TournamentTables", (string)null);
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Venue", b =>
@@ -768,7 +768,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("City", "Country");
 
-                    b.ToTable("Venues");
+                    b.ToTable("Venues", (string)null);
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>

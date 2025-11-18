@@ -213,7 +213,7 @@ public class TournamentsController : ControllerBase
     {
         var uid = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var ok = await _svc.UnlinkTournamentPlayerAsync(tournamentId, tpId, uid, ct);
-        if (!ok) return BadRequest(new { message = "Unlink failed." });
+        if (!ok) return BadRequest(new { message = "Unlink failed." }); 
         return Ok(new { message = "Unlinked." });
     }
 

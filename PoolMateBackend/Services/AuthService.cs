@@ -1,4 +1,4 @@
-﻿using System.IdentityModel.Tokens.Jwt;
+﻿﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Identity;
@@ -51,6 +51,7 @@ public class AuthService : IAuthService
         {
             new(ClaimTypes.Name, user.UserName ?? string.Empty),
             new(ClaimTypes.NameIdentifier, user.Id),
+            new(ClaimTypes.Email, user.Email ?? string.Empty), 
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
         foreach (var r in userRoles) claims.Add(new Claim(ClaimTypes.Role, r));

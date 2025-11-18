@@ -104,4 +104,130 @@ public class AdminUsersController : ControllerBase
 
         return Ok(response.Data);
     }
+
+    /// <summary>
+    /// GET: api/admin/users/statistics
+    /// Lấy thống kê tổng quan về users trong hệ thống
+    /// Bao gồm: Overview, Email/Phone verification, Security, Role distribution, Geographic, Growth trends
+    /// </summary>
+    [HttpGet("statistics")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetUserStatistics(CancellationToken ct)
+    {
+        var response = await _userService.GetUserStatisticsAsync(ct);
+        
+        if (!response.Success)
+        {
+            return BadRequest(new { message = response.Message });
+        }
+
+        return Ok(response.Data);
+    }
+
+    /// <summary>
+    /// GET: api/admin/users/{id}/activity-log
+    /// Lấy activity log của 1 user cụ thể
+    /// Bao gồm: Activity summary, Recent activities (tournaments, posts, venues)
+    /// </summary>
+    [HttpGet("{id}/activity-log")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetUserActivityLog(string id, CancellationToken ct)
+    {
+        var response = await _userService.GetUserActivityLogAsync(id, ct);
+        
+        if (!response.Success)
+        {
+            return NotFound(new { message = response.Message });
+        }
+
+        return Ok(response.Data);
+    }
+
+    /// <summary>
+    /// POST: api/admin/users/bulk-deactivate
+    /// Deactivate nhiều users cùng lúc (bulk operation)
+    /// Request body: { userIds: ["id1", "id2", ...], reason: "...", force: false }
+    /// </summary>
+    [HttpPost("bulk-deactivate")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> BulkDeactivateUsers(
+        [FromBody] BulkDeactivateUsersDto request, 
+        CancellationToken ct)
+    {
+        if (!request.UserIds.Any())
+        {
+            return BadRequest(new { message = "UserIds list cannot be empty" });
+        }
+
+        var response = await _userService.BulkDeactivateUsersAsync(request, ct);
+        
+        if (!response.Success)
+        {
+            return BadRequest(new { message = response.Message });
+        }
+
+        return Ok(response.Data);
+    }
+
+    /// <summary>
+    /// POST: api/admin/users/bulk-reactivate
+    /// Reactivate nhiều users cùng lúc (bulk operation)
+    /// Request body: { userIds: ["id1", "id2", ...], reason: "..." }
+    /// </summary>
+    [HttpPost("bulk-reactivate")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> BulkReactivateUsers(
+        [FromBody] BulkReactivateUsersDto request, 
+        CancellationToken ct)
+    {
+        if (!request.UserIds.Any())
+        {
+            return BadRequest(new { message = "UserIds list cannot be empty" });
+        }
+
+        var response = await _userService.BulkReactivateUsersAsync(request, ct);
+        
+        if (!response.Success)
+        {
+            return BadRequest(new { message = response.Message });
+        }
+
+        return Ok(response.Data);
+    }
+
+    /// <summary>
+    /// GET: api/admin/users/export
+    /// Export danh sách users ra CSV file
+    /// Hỗ trợ filter như API list users
+    /// </summary>
+    [HttpGet("export")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> ExportUsers(
+        [FromQuery] AdminUserFilterDto filter,
+        CancellationToken ct)
+    {
+        var response = await _userService.ExportUsersAsync(filter, ct);
+        
+        if (!response.Success)
+        {
+            return BadRequest(new { message = response.Message });
+        }
+
+        var exportData = response.Data as dynamic;
+        if (exportData == null)
+        {
+            return BadRequest(new { message = "Export failed" });
+        }
+
+        // Return CSV file
+        var content = System.Text.Encoding.UTF8.GetBytes(exportData.content.ToString());
+        return File(content, "text/csv", exportData.fileName.ToString());
+    }
 }
