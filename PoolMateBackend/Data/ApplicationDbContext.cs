@@ -178,6 +178,9 @@ namespace PoolMate.Api.Data
             m.HasIndex(x => x.WinnerTpId);
             m.HasIndex(x => x.TableId);
 
+            m.Property(x => x.Player1SourceType).HasConversion<string>().HasMaxLength(16);
+            m.Property(x => x.Player2SourceType).HasConversion<string>().HasMaxLength(16);
+
             // self refs for next pointers
             m.HasOne<Match>().WithMany().HasForeignKey(x => x.NextWinnerMatchId).OnDelete(DeleteBehavior.NoAction);
             m.HasOne<Match>().WithMany().HasForeignKey(x => x.NextLoserMatchId).OnDelete(DeleteBehavior.NoAction);

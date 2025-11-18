@@ -41,6 +41,11 @@ namespace PoolMate.Api.Dtos.Tournament
         public PlayerDto? Player1 { get; set; }
         public PlayerDto? Player2 { get; set; }
         public PlayerDto? Winner { get; set; }
+
+    public MatchSlotSourceType? Player1SourceType { get; set; }
+    public int? Player1SourceMatchId { get; set; }
+    public MatchSlotSourceType? Player2SourceType { get; set; }
+    public int? Player2SourceMatchId { get; set; }
         
         public DateTime? ScheduledUtc { get; set; }
         public string? ScheduledDisplay { get; set; } // "Oct 21, 11:00h"

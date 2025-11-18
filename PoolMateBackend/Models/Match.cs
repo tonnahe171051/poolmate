@@ -19,6 +19,11 @@
         public int? Player2TpId { get; set; }
         public TournamentPlayer? Player2Tp { get; set; }    
 
+    public MatchSlotSourceType? Player1SourceType { get; set; }
+    public int? Player1SourceMatchId { get; set; }
+    public MatchSlotSourceType? Player2SourceType { get; set; }
+    public int? Player2SourceMatchId { get; set; }
+
         public int? TableId { get; set; }
         public TournamentTable? Table { get; set; }// TournamentTable.Id
         public DateTime? ScheduledUtc { get; set; }
