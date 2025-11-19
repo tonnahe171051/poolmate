@@ -21,11 +21,8 @@ public class PlayersController : ControllerBase
         _service = service;
         _userManager = userManager;
     }
-
-    /// <summary>
+    
     /// Get danh sách Players mà user có thể claim (based on email)
-    /// </summary>
-    /// <returns>Danh sách claimable players</returns>
     [HttpGet("claimable")]
     public async Task<ActionResult<List<ClaimablePlayerDto>>> GetClaimablePlayers(CancellationToken ct)
     {
@@ -47,13 +44,8 @@ public class PlayersController : ControllerBase
         return Ok(players);
     }
 
-    /// <summary>
+
     /// User tự claim Player profile (validate email match)
-    /// </summary>
-    /// <param name="playerId">Player ID cần claim</param>
-    /// <param name="request">Claim request</param>
-    /// <param name="ct">Cancellation Token</param>
-    /// <returns>Claim result</returns>
     [HttpPost("{playerId}/claim")]
     public async Task<ActionResult<ClaimPlayerResponse>> ClaimPlayer(
         int playerId,
@@ -78,11 +70,8 @@ public class PlayersController : ControllerBase
 
         return Ok(result);
     }
-
-    /// <summary>
+    
     /// Get danh sách Players mà user đã claim
-    /// </summary>
-    /// <returns>Danh sách players của user</returns>
     [HttpGet("my-players")]
     public async Task<ActionResult<List<Dtos.Admin.Player.PlayerListDto>>> GetMyPlayers(CancellationToken ct)
     {
@@ -94,12 +83,8 @@ public class PlayersController : ControllerBase
         return Ok(players);
     }
 
-    /// <summary>
+
     /// Unclaim Player (remove link)
-    /// </summary>
-    /// <param name="playerId">Player ID</param>
-    /// <param name="ct">Cancellation Token</param>
-    /// <returns>Success message</returns>
     [HttpPost("{playerId}/unclaim")]
     public async Task<IActionResult> UnclaimPlayer(int playerId, CancellationToken ct)
     {
@@ -110,7 +95,7 @@ public class PlayersController : ControllerBase
         // Check if player belongs to this user
         var player = await _service.GetLinkedUserAsync(playerId, ct);
         if (player == null || player.UserId != userId)
-            return Forbid(); // Player không thuộc user này
+            return Forbid(); 
 
         var success = await _service.UnlinkPlayerFromUserAsync(playerId, ct);
         if (!success)

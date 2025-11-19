@@ -9,9 +9,7 @@ public class BulkLinkPlayersDto
     public string? Reason { get; set; }
 }
 
-/// <summary>
-/// Single player-user link mapping
-/// </summary>
+
 public class PlayerUserLinkDto
 {
     public int PlayerId { get; set; }

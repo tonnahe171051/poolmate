@@ -22,10 +22,9 @@ public class AdminUsersController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>
+
     /// GET: api/admin/users
     /// Lấy danh sách users với phân trang, filter, search, sort
-    /// </summary>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -44,10 +43,9 @@ public class AdminUsersController : ControllerBase
         return Ok(response.Data);
     }
 
-    /// <summary>
+
     /// GET: api/admin/users/{id}
     /// Lấy thông tin chi tiết của 1 user
-    /// </summary>
     [HttpGet("{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -63,11 +61,9 @@ public class AdminUsersController : ControllerBase
         return Ok(response.Data);
     }
 
-    /// <summary>
+
     /// PUT: api/admin/users/{id}/deactivate
     /// Vô hiệu hóa tài khoản user (lock vĩnh viễn)
-    /// User sẽ không thể đăng nhập nhưng dữ liệu vẫn được giữ lại
-    /// </summary>
     [HttpPut("{id}/deactivate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -84,11 +80,9 @@ public class AdminUsersController : ControllerBase
         return Ok(response.Data);
     }
 
-    /// <summary>
+
     /// PUT: api/admin/users/{id}/reactivate
     /// Kích hoạt lại tài khoản đã bị deactivate
-    /// User sẽ có thể đăng nhập lại
-    /// </summary>
     [HttpPut("{id}/reactivate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -105,11 +99,9 @@ public class AdminUsersController : ControllerBase
         return Ok(response.Data);
     }
 
-    /// <summary>
+
     /// GET: api/admin/users/statistics
     /// Lấy thống kê tổng quan về users trong hệ thống
-    /// Bao gồm: Overview, Email/Phone verification, Security, Role distribution, Geographic, Growth trends
-    /// </summary>
     [HttpGet("statistics")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -126,11 +118,9 @@ public class AdminUsersController : ControllerBase
         return Ok(response.Data);
     }
 
-    /// <summary>
+
     /// GET: api/admin/users/{id}/activity-log
     /// Lấy activity log của 1 user cụ thể
-    /// Bao gồm: Activity summary, Recent activities (tournaments, posts, venues)
-    /// </summary>
     [HttpGet("{id}/activity-log")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -145,12 +135,9 @@ public class AdminUsersController : ControllerBase
 
         return Ok(response.Data);
     }
-
-    /// <summary>
+    
     /// POST: api/admin/users/bulk-deactivate
     /// Deactivate nhiều users cùng lúc (bulk operation)
-    /// Request body: { userIds: ["id1", "id2", ...], reason: "...", force: false }
-    /// </summary>
     [HttpPost("bulk-deactivate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -173,11 +160,9 @@ public class AdminUsersController : ControllerBase
         return Ok(response.Data);
     }
 
-    /// <summary>
+
     /// POST: api/admin/users/bulk-reactivate
     /// Reactivate nhiều users cùng lúc (bulk operation)
-    /// Request body: { userIds: ["id1", "id2", ...], reason: "..." }
-    /// </summary>
     [HttpPost("bulk-reactivate")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -200,11 +185,9 @@ public class AdminUsersController : ControllerBase
         return Ok(response.Data);
     }
 
-    /// <summary>
+
     /// GET: api/admin/users/export
     /// Export danh sách users ra CSV file
-    /// Hỗ trợ filter như API list users
-    /// </summary>
     [HttpGet("export")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
