@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PoolMate.Api.Data;
+using PoolMate.Api.Hubs;
 using PoolMate.Api.Integrations.Cloudinary36;
 using PoolMate.Api.Integrations.Email;
 using PoolMate.Api.Integrations.FargoRate;
@@ -55,6 +56,7 @@ builder.Services.AddControllers()
         );
     });
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSignalR();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "PoolMate.Api", Version = "v1" });
@@ -140,6 +142,10 @@ builder.Services.AddHttpClient<IFargoRateService, FargoRateService>(client =>
 // Add Memory Cache
 builder.Services.AddMemoryCache();
 
+builder.Services.Configure<TableTokenOptions>(builder.Configuration.GetSection(TableTokenOptions.SectionName));
+builder.Services.AddSingleton<IMatchLockService, MatchLockService>();
+builder.Services.AddScoped<ITableTokenService, TableTokenService>();
+
 // App services
 builder.Services.AddScoped<AuthService>();
 
@@ -199,4 +205,5 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<TournamentHub>("/hubs/tournament");
 app.Run();

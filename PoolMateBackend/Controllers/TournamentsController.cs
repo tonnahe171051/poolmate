@@ -93,28 +93,19 @@ public class TournamentsController : ControllerBase
         return ok ? Ok(new { id }) : Forbid();
     }
 
-    [HttpPost("{id:int}/end")]
-    public async Task<IActionResult> End(int id, CancellationToken ct)
-    {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var ok = await _svc.EndAsync(id, userId, ct);
-        return ok ? Ok(new { id }) : Forbid();
-    }
-
-    [HttpPost("payout/preview")]
-    [AllowAnonymous]
-    public async Task<IActionResult> PreviewPayout([FromBody] PreviewPayoutRequest model, CancellationToken ct)
-    {
-        var resp = await _svc.PreviewPayoutAsync(model, ct);
-        return Ok(resp);
-    }
-
     [HttpGet("payout-templates")]
     [AllowAnonymous]
     public async Task<ActionResult<List<PayoutTemplateDto>>> GetPayoutTemplates(CancellationToken ct)
     {
-        var data = await _svc.GetPayoutTemplatesAsync(ct);
-        return Ok(data);
+        try
+        {
+            var data = await _svc.GetPayoutTemplatesAsync(ct);
+            return Ok(data);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpGet]
@@ -465,39 +456,83 @@ public class TournamentsController : ControllerBase
             return BadRequest(new { message = ex.Message });
         }
     }
-
-
     [HttpGet("{id}/bracket")]
     public async Task<ActionResult<BracketDto>> GetBracket(
-    int id,
-    [FromQuery] BracketFilterType? filterType = null,
-    CancellationToken ct = default)
+        int id,
+        [FromQuery] BracketFilterType? filterType = null,
+        CancellationToken ct = default)
     {
         try
         {
-            if (filterType == null)
+            if (filterType.HasValue)
             {
-                var bracket = await _bracket.GetAsync(id, ct);
-                return Ok(bracket);
+                var filter = new BracketFilterRequest { FilterType = filterType.Value };
+                var filtered = await _bracket.GetFilteredAsync(id, filter, ct);
+                return Ok(filtered);
             }
 
-            var filter = new BracketFilterRequest
-            {
-                FilterType = filterType.Value
-            };
-
-            var filteredBracket = await _bracket.GetFilteredAsync(id, filter, ct);
-            return Ok(filteredBracket);
+            var bracket = await _bracket.GetAsync(id, ct);
+            return Ok(bracket);
         }
         catch (KeyNotFoundException)
         {
-            return NotFound("Tournament not found");
+            return NotFound(new { message = "Tournament not found." });
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(ex.Message);
+            return BadRequest(new { message = ex.Message });
         }
     }
 
+    [HttpGet("{id}/status-summary")]
+    public async Task<ActionResult<TournamentStatusSummaryDto>> GetTournamentStatusSummary(int id, CancellationToken ct)
+    {
+        try
+        {
+            var status = await _bracket.GetTournamentStatusAsync(id, ct);
+            return Ok(status);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Tournament not found." });
+        }
+    }
 
+    [HttpPost("{tournamentId}/stages/{stageNo}/complete")]
+    public async Task<IActionResult> CompleteStage(
+        int tournamentId,
+        int stageNo,
+        [FromBody] CompleteStageRequest? request,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await _bracket.CompleteStageAsync(tournamentId, stageNo, request ?? new CompleteStageRequest(), ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Tournament or stage not found." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("{id}/bracket/debug")]
+    public async Task<ActionResult<IReadOnlyList<string>>> GetBracketDebug(int id, CancellationToken ct = default)
+    {
+        var lines = await _bracket.GetBracketDebugViewAsync(id, ct);
+        return Ok(lines);
+    }
+
+    [HttpGet("{tournamentId}/players/stats")]
+    public async Task<ActionResult<IReadOnlyList<TournamentPlayerStatsDto>>> GetPlayerStats(
+        int tournamentId,
+        CancellationToken ct = default)
+    {
+        var stats = await _bracket.GetPlayerStatsAsync(tournamentId, ct);
+        return Ok(stats);
+    }
 }

@@ -1,4 +1,6 @@
-﻿namespace PoolMate.Api.Models
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace PoolMate.Api.Models
 {
     public class Match
     {
@@ -41,6 +43,7 @@
         public int? NextWinnerMatchId { get; set; }
         public int? NextLoserMatchId { get; set; }         
 
+        [Timestamp]
         public byte[] RowVersion { get; set; } = default!;
     }
 }
