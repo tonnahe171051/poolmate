@@ -456,6 +456,24 @@ public class TournamentsController : ControllerBase
             return BadRequest(new { message = ex.Message });
         }
     }
+
+    [HttpPost("{id}/bracket/reset")]
+    public async Task<IActionResult> ResetBracket(int id, CancellationToken ct)
+    {
+        try
+        {
+            await _bracket.ResetAsync(id, ct);
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Tournament not found." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
     [HttpGet("{id}/bracket")]
     public async Task<ActionResult<BracketDto>> GetBracket(
         int id,

@@ -1048,6 +1048,34 @@ namespace PoolMate.Api.Services
             }
         }
 
+        public async Task ResetAsync(int tournamentId, CancellationToken ct)
+        {
+            var tournament = await _db.Tournaments
+                .Include(t => t.Stages)
+                .Include(t => t.Matches)
+                .FirstOrDefaultAsync(t => t.Id == tournamentId, ct)
+                ?? throw new KeyNotFoundException("Tournament not found.");
+
+            var canReset = (!tournament.IsStarted && tournament.Status == TournamentStatus.Upcoming) ||
+                           tournament.Status == TournamentStatus.Completed;
+
+            if (!canReset)
+                throw new InvalidOperationException("Bracket can only be reset before the tournament starts or after it has completed.");
+
+            if (tournament.Matches.Count == 0 && tournament.Stages.Count == 0)
+                return;
+
+            _db.Matches.RemoveRange(tournament.Matches);
+            _db.TournamentStages.RemoveRange(tournament.Stages);
+
+            tournament.IsStarted = false;
+            tournament.Status = TournamentStatus.Upcoming;
+            tournament.EndUtc = null;
+            tournament.UpdatedAt = DateTime.UtcNow;
+
+            await _db.SaveChangesAsync(ct);
+        }
+
         public async Task<IReadOnlyList<TournamentPlayerStatsDto>> GetPlayerStatsAsync(int tournamentId, CancellationToken ct)
         {
             var players = await _db.TournamentPlayers
