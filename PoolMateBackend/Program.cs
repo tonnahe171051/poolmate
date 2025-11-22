@@ -13,6 +13,8 @@ using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System.Text;
 using System.Text.Json.Serialization;
+using PoolMate.Api.Dtos.Response;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -119,6 +121,29 @@ builder.Services.AddAuthentication(o =>
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Secret"]!)),
         ValidateLifetime = true,
         ClockSkew = TimeSpan.Zero
+    };
+    o.Events = new JwtBearerEvents
+    {
+        //  401 Unauthorized 
+        OnChallenge = context =>
+        {
+            context.HandleResponse();
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.ContentType = "application/json";
+            var response = ApiResponse<object>.Fail(401, "Unauthorized: You are not logged in or token is invalid.");
+            var json = JsonSerializer.Serialize(response);
+            return context.Response.WriteAsync(json);
+        },
+        
+        // 403 Forbidden
+        OnForbidden = context =>
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/json";
+            var response = ApiResponse<object>.Fail(403, "Forbidden: You do not have permission to access this resource.");
+            var json = JsonSerializer.Serialize(response);
+            return context.Response.WriteAsync(json);
+        }
     };
 });
 

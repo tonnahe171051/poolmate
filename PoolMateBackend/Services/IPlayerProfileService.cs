@@ -1,12 +1,12 @@
 using PoolMate.Api.Dtos.PlayerProfile;
-
+using PoolMate.Api.Models;
 namespace PoolMate.Api.Services;
 
 public interface IPlayerProfileService
 {
     Task<CreatePlayerProfileResponseDto?> CreatePlayerProfileAsync(
-        CreatePlayerProfileDto dto,
         string userId,
+        ApplicationUser user, 
         CancellationToken ct = default);
 
     Task<List<PlayerProfileDetailDto>> GetMyPlayerProfilesAsync(

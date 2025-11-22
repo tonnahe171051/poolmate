@@ -4,6 +4,9 @@ using PoolMate.Api.Dtos.PlayerProfile;
 using PoolMate.Api.Services;
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
+using PoolMate.Api.Models;
+using PoolMate.Api.Dtos.Response;
 
 namespace PoolMate.Api.Controllers;
 
@@ -13,46 +16,55 @@ namespace PoolMate.Api.Controllers;
 public class PlayerProfileController : ControllerBase
 {
     private readonly IPlayerProfileService _service;
+    private readonly UserManager<ApplicationUser> _userManager;
 
-    public PlayerProfileController(IPlayerProfileService service)
+    public PlayerProfileController(IPlayerProfileService service, UserManager<ApplicationUser> userManager)
     {
         _service = service;
+        _userManager = userManager;
     }
 
 
     [HttpPost]
-    [ProducesResponseType(typeof(CreatePlayerProfileResponseDto), StatusCodes.Status201Created)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)] 
-    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    [ProducesResponseType(typeof(ApiResponse<CreatePlayerProfileResponseDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
     public async Task<ActionResult<CreatePlayerProfileResponseDto>> CreatePlayerProfile(
-        [FromBody] CreatePlayerProfileDto dto,
         CancellationToken ct)
     {
         try
         {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (string.IsNullOrWhiteSpace(userId))
-                return Unauthorized(new { message = "User not authenticated or invalid token" });
-            var result = await _service.CreatePlayerProfileAsync(dto, userId, ct);
-            if (result == null) 
-                return BadRequest(new { message = "Failed to create player profile" });
+            {
+                return Unauthorized(ApiResponse<CreatePlayerProfileResponseDto>.Fail(401, "User not authenticated"));
+            }
 
+            var user = await _userManager.FindByIdAsync(userId);
+            if (user == null)
+            {
+                return BadRequest(ApiResponse<CreatePlayerProfileResponseDto>.Fail(400, "User account not found"));
+            }
+
+            var result = await _service.CreatePlayerProfileAsync(userId, user, ct);
+            if (result == null)
+                return BadRequest(ApiResponse<CreatePlayerProfileResponseDto>.Fail(400, "Failed to create player profile"));
+            
             return CreatedAtAction(
-                actionName: nameof(GetMyPlayerProfiles), 
+                actionName: nameof(GetMyPlayerProfiles),
                 routeValues: null,
-                value: result
+                value: ApiResponse<CreatePlayerProfileResponseDto>.Created(result, "Player profile created successfully")
             );
         }
-        catch (InvalidOperationException ex) 
+        catch (InvalidOperationException ex)
         {
-            return Conflict(new { message = ex.Message });
+            return Conflict(ApiResponse<CreatePlayerProfileResponseDto>.Fail(409, ex.Message));
         }
         catch (Exception e)
         {
-            return StatusCode(500, new { message = "Internal server error." });
+            return StatusCode(500, ApiResponse<CreatePlayerProfileResponseDto>.Fail(500, "Internal server error"));
         }
     }
 
@@ -69,22 +81,17 @@ public class PlayerProfileController : ControllerBase
 
             if (string.IsNullOrWhiteSpace(userId))
             {
-                return Unauthorized(new { message = "User not authenticated" });
+                return Unauthorized(ApiResponse<List<PlayerProfileDetailDto>>.Fail(401, "User not authenticated"));
             }
 
             var profiles = await _service.GetMyPlayerProfilesAsync(userId, ct);
-            if (profiles == null)
-            {
-                profiles = new List<PlayerProfileDetailDto>();
-            }
+            if (profiles == null) profiles = new List<PlayerProfileDetailDto>();
 
-            return Ok(profiles);
+            return Ok(ApiResponse<List<PlayerProfileDetailDto>>.Ok(profiles));
         }
         catch (Exception e)
         {
-            return StatusCode(500, new { message = "Internal server error. Please try again later." });
+            return StatusCode(500, ApiResponse<List<PlayerProfileDetailDto>>.Fail(500, "Internal server error"));
         }
     }
-    
-
 }

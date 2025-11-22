@@ -15,8 +15,8 @@ public class PlayerProfileService : IPlayerProfileService
     }
 
     public async Task<CreatePlayerProfileResponseDto?> CreatePlayerProfileAsync(
-        CreatePlayerProfileDto dto,
         string userId,
+        ApplicationUser user, 
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(userId)) return null;
@@ -25,28 +25,37 @@ public class PlayerProfileService : IPlayerProfileService
         {
             throw new InvalidOperationException("User already has a player profile.");
         }
+        
+        string fullNameMap = $"{user.FirstName} {user.LastName}".Trim();
+        if (string.IsNullOrWhiteSpace(fullNameMap)) 
+        {
+            fullNameMap = user.UserName ?? "Unknown Player"; 
+        }
         var newPlayer = new Player
         {
             UserId = userId,
             CreatedAt = DateTime.UtcNow,
-            FullName = dto.FullName.Trim(),
-            Nickname = string.IsNullOrWhiteSpace(dto.Nickname) ? null : dto.Nickname.Trim(),
-            Email = string.IsNullOrWhiteSpace(dto.Email) ? null : dto.Email.Trim(),
-            Phone = string.IsNullOrWhiteSpace(dto.Phone) ? null : dto.Phone.Trim(),
-            Country = string.IsNullOrWhiteSpace(dto.Country) ? null : dto.Country.Trim().ToUpper(),
-            City = string.IsNullOrWhiteSpace(dto.City) ? null : dto.City.Trim(),
-            SkillLevel = dto.SkillLevel
+            Email = user.Email,
+            FullName = fullNameMap,
+            Nickname = user.Nickname,     
+            Phone = user.PhoneNumber,     
+            Country = user.Country,       
+            City = user.City,             
+            SkillLevel = null 
         };
 
         _db.Players.Add(newPlayer);
         await _db.SaveChangesAsync(ct);
         return new CreatePlayerProfileResponseDto
         {
-            PlayerId = newPlayer.Id,
             FullName = newPlayer.FullName,
+            Nickname = newPlayer.Nickname,
             Email = newPlayer.Email,
+            Phone = newPlayer.Phone,
+            Country = newPlayer.Country,
+            City = newPlayer.City,
             CreatedAt = newPlayer.CreatedAt,
-            Message = "Player profile created successfully"
+            Message = "Player profile created automatically from account info"
         };
     }
 
