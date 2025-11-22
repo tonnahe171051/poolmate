@@ -4,7 +4,6 @@ using PoolMate.Api.Common;
 using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Admin.Player;
 using PoolMate.Api.Dtos.Auth;
-using PoolMate.Api.Dtos.Player;
 using PoolMate.Api.Models;
 
 namespace PoolMate.Api.Services;
@@ -27,7 +26,6 @@ public class AdminPlayerService : IAdminPlayerService
         // Start with base query
         var query = _db.Players
             .AsNoTracking()
-            .Include(p => p.User)
             .AsQueryable();
 
         // Apply filters
@@ -85,19 +83,6 @@ public class AdminPlayerService : IAdminPlayerService
         if (filter.MaxSkillLevel.HasValue)
         {
             query = query.Where(p => p.SkillLevel <= filter.MaxSkillLevel.Value);
-        }
-
-        // Filter by linked account status
-        if (filter.HasLinkedAccount.HasValue)
-        {
-            if (filter.HasLinkedAccount.Value)
-            {
-                query = query.Where(p => p.UserId != null);
-            }
-            else
-            {
-                query = query.Where(p => p.UserId == null);
-            }
         }
 
         // 🆕 Date range filters
@@ -198,9 +183,7 @@ public class AdminPlayerService : IAdminPlayerService
                 Country = p.Country,
                 City = p.City,
                 SkillLevel = p.SkillLevel,
-                CreatedAt = p.CreatedAt,
-                LinkedUserId = p.UserId,
-                LinkedUserEmail = p.User != null ? p.User.Email : null
+                CreatedAt = p.CreatedAt
             })
             .ToListAsync(ct);
 
@@ -212,7 +195,6 @@ public class AdminPlayerService : IAdminPlayerService
     {
         var player = await _db.Players
             .AsNoTracking()
-            .Include(p => p.User)
             .Include(p => p.TournamentPlayers)
                 .ThenInclude(tp => tp.Tournament)
             .FirstOrDefaultAsync(p => p.Id == playerId, ct);
@@ -230,27 +212,8 @@ public class AdminPlayerService : IAdminPlayerService
             Country = player.Country,
             City = player.City,
             SkillLevel = player.SkillLevel,
-            CreatedAt = player.CreatedAt,
-            HasLinkedAccount = player.UserId != null
+            CreatedAt = player.CreatedAt
         };
-
-        // Map linked user info
-        if (player.User != null)
-        {
-            result.LinkedUser = new LinkedUserDetailDto
-            {
-                UserId = player.UserId!,
-                Email = player.User.Email,
-                UserName = player.User.UserName,
-                FullName = string.IsNullOrWhiteSpace(player.User.FirstName) && string.IsNullOrWhiteSpace(player.User.LastName)
-                    ? null
-                    : $"{player.User.FirstName} {player.User.LastName}".Trim(),
-                Nickname = player.User.Nickname,
-                PhoneNumber = player.User.PhoneNumber,
-                ProfilePicture = player.User.ProfilePicture,
-                CreatedAt = player.User.CreatedAt
-            };
-        }
 
         // Calculate tournament statistics
         var tournaments = player.TournamentPlayers.ToList();
@@ -306,12 +269,6 @@ public class AdminPlayerService : IAdminPlayerService
 
         var totalPlayers = allPlayers.Count;
 
-        // Basic statistics
-        var playersWithLinkedAccount = allPlayers.Count(p => p.UserId != null);
-        var playersWithoutLinkedAccount = totalPlayers - playersWithLinkedAccount;
-        var linkedAccountPercentage = totalPlayers > 0 
-            ? Math.Round((double)playersWithLinkedAccount / totalPlayers * 100, 2) 
-            : 0;
 
         // Recent activity
         var playersCreatedLast30Days = allPlayers.Count(p => p.CreatedAt >= last30Days);
@@ -401,9 +358,6 @@ public class AdminPlayerService : IAdminPlayerService
         return new PlayerStatisticsDto
         {
             TotalPlayers = totalPlayers,
-            PlayersWithLinkedAccount = playersWithLinkedAccount,
-            PlayersWithoutLinkedAccount = playersWithoutLinkedAccount,
-            LinkedAccountPercentage = linkedAccountPercentage,
             PlayersCreatedLast30Days = playersCreatedLast30Days,
             PlayersCreatedLast7Days = playersCreatedLast7Days,
             PlayersCreatedToday = playersCreatedToday,
@@ -454,514 +408,6 @@ public class AdminPlayerService : IAdminPlayerService
             _ => query.OrderByDescending(p => p.CreatedAt) // Default: newest first
         };
     }
-
-    public async Task<PagingList<UnclaimedPlayerDto>> GetUnclaimedPlayersAsync(PlayerFilterDto filter, CancellationToken ct = default)
-    {
-        // Start with base query - only unclaimed players
-        var query = _db.Players
-            .AsNoTracking()
-            .Where(p => p.UserId == null)  // Only unclaimed players
-            .Include(p => p.TournamentPlayers)
-                .ThenInclude(tp => tp.Tournament)
-            .AsQueryable();
-
-        // Apply filters (reuse existing filter logic)
-        
-        // Search by full name
-        if (!string.IsNullOrWhiteSpace(filter.SearchName))
-        {
-            var searchTerm = filter.SearchName.ToLower();
-            query = query.Where(p => p.FullName.ToLower().Contains(searchTerm));
-        }
-
-        // Filter by country
-        if (!string.IsNullOrWhiteSpace(filter.Country))
-        {
-            query = query.Where(p => p.Country == filter.Country);
-        }
-
-        // Filter by city
-        if (!string.IsNullOrWhiteSpace(filter.City))
-        {
-            query = query.Where(p => p.City == filter.City);
-        }
-
-        // Filter by skill level range
-        if (filter.MinSkillLevel.HasValue)
-        {
-            query = query.Where(p => p.SkillLevel >= filter.MinSkillLevel.Value);
-        }
-
-        if (filter.MaxSkillLevel.HasValue)
-        {
-            query = query.Where(p => p.SkillLevel <= filter.MaxSkillLevel.Value);
-        }
-
-        // Get total count before pagination
-        var totalRecords = await query.CountAsync(ct);
-
-        // Apply sorting
-        query = ApplySorting(query, filter.SortBy, filter.SortOrder);
-
-        // Apply pagination and get players
-        var players = await query
-            .Skip((filter.PageIndex - 1) * filter.PageSize)
-            .Take(filter.PageSize)
-            .ToListAsync(ct);
-
-        // Get all emails from players for potential matching
-        var playerEmails = players
-            .Where(p => !string.IsNullOrWhiteSpace(p.Email))
-            .Select(p => p.Email!.ToLower())
-            .Distinct()
-            .ToList();
-
-        // Find potential user matches by email
-        var potentialUsers = new Dictionary<string, List<ApplicationUser>>();
-        if (playerEmails.Any())
-        {
-            var usersWithMatchingEmails = await _db.Users
-                .AsNoTracking()
-                .Where(u => playerEmails.Contains(u.Email!.ToLower()))
-                .ToListAsync(ct);
-
-            foreach (var user in usersWithMatchingEmails)
-            {
-                var emailKey = user.Email!.ToLower();
-                if (!potentialUsers.ContainsKey(emailKey))
-                {
-                    potentialUsers[emailKey] = new List<ApplicationUser>();
-                }
-                potentialUsers[emailKey].Add(user);
-            }
-        }
-
-        // Map to DTOs
-        var items = players.Select(p =>
-        {
-            var tournaments = p.TournamentPlayers.ToList();
-            var tournamentDates = tournaments
-                .Where(tp => tp.Tournament != null)
-                .Select(tp => tp.Tournament.StartUtc)
-                .OrderByDescending(d => d)
-                .ToList();
-
-            // Find potential user matches by email
-            var matches = new List<PotentialUserMatchDto>();
-            if (!string.IsNullOrWhiteSpace(p.Email))
-            {
-                var emailKey = p.Email.ToLower();
-                if (potentialUsers.ContainsKey(emailKey))
-                {
-                    matches = potentialUsers[emailKey].Select(u => new PotentialUserMatchDto
-                    {
-                        UserId = u.Id,
-                        Email = u.Email!,
-                        UserName = u.UserName,
-                        FullName = string.IsNullOrWhiteSpace(u.FirstName) && string.IsNullOrWhiteSpace(u.LastName)
-                            ? null
-                            : $"{u.FirstName} {u.LastName}".Trim(),
-                        CreatedAt = u.CreatedAt
-                    }).ToList();
-                }
-            }
-
-            return new UnclaimedPlayerDto
-            {
-                Id = p.Id,
-                FullName = p.FullName,
-                Nickname = p.Nickname,
-                Email = p.Email,
-                Phone = p.Phone,
-                Country = p.Country,
-                City = p.City,
-                SkillLevel = p.SkillLevel,
-                CreatedAt = p.CreatedAt,
-                TournamentsCount = tournaments.Count,
-                LastTournamentDate = tournamentDates.FirstOrDefault(),
-                PotentialMatches = matches
-            };
-        }).ToList();
-
-        return PagingList<UnclaimedPlayerDto>.Create(items, totalRecords, filter.PageIndex, filter.PageSize);
-    }
-
-    public async Task<bool> LinkPlayerToUserAsync(int playerId, string userId, CancellationToken ct = default)
-    {
-        // Validate Player exists
-        var player = await _db.Players.FindAsync(new object[] { playerId }, ct);
-        if (player == null) return false;
-
-        // Validate User exists
-        var user = await _userManager.FindByIdAsync(userId);
-        if (user == null) return false;
-
-        // Check if Player already linked to another User
-        if (player.UserId != null && player.UserId != userId)
-        {
-            // 1 Player chỉ có thể link với 1 User
-            // Không cho phép link với User khác
-            return false;
-        }
-
-        // Link
-        player.UserId = userId;
-        await _db.SaveChangesAsync(ct);
-        
-        return true;
-    }
-
-    public async Task<bool> UnlinkPlayerFromUserAsync(int playerId, CancellationToken ct = default)
-    {
-        var player = await _db.Players.FindAsync(new object[] { playerId }, ct);
-        if (player == null) return false;
-
-        player.UserId = null;
-        await _db.SaveChangesAsync(ct);
-        
-        return true;
-    }
-
-    public async Task<List<PlayerListDto>> GetPlayersByUserIdAsync(string userId, CancellationToken ct = default)
-    {
-        var players = await _db.Players
-            .AsNoTracking()
-            .Include(p => p.User)
-            .Where(p => p.UserId == userId)
-            .Select(p => new PlayerListDto
-            {
-                Id = p.Id,
-                FullName = p.FullName,
-                Nickname = p.Nickname,
-                Email = p.Email,
-                Phone = p.Phone,
-                Country = p.Country,
-                City = p.City,
-                SkillLevel = p.SkillLevel,
-                CreatedAt = p.CreatedAt,
-                LinkedUserId = p.UserId,
-                LinkedUserEmail = p.User != null ? p.User.Email : null
-            })
-            .ToListAsync(ct);
-
-        return players;
-    }
-
-    public async Task<UserInfoDto?> GetLinkedUserAsync(int playerId, CancellationToken ct = default)
-    {
-        var player = await _db.Players
-            .AsNoTracking()
-            .Include(p => p.User)
-            .FirstOrDefaultAsync(p => p.Id == playerId, ct);
-
-        if (player?.User == null) return null;
-
-        return new UserInfoDto
-        {
-            UserId = player.UserId!,
-            Email = player.User.Email!,
-            FullName = string.IsNullOrWhiteSpace(player.User.FirstName) && string.IsNullOrWhiteSpace(player.User.LastName)
-                ? null
-                : $"{player.User.FirstName} {player.User.LastName}".Trim(),
-            Nickname = player.User.Nickname
-        };
-    }
-
-    /// <summary>
-    /// BULK LINK PLAYERS - Link multiple players to users at once
-    /// </summary>
-    public async Task<BulkOperationResultDto> BulkLinkPlayersAsync(BulkLinkPlayersDto request, CancellationToken ct = default)
-    {
-        var results = new List<BulkOperationItemDto>();
-        var successCount = 0;
-        var failedCount = 0;
-        var skippedCount = 0;
-
-        foreach (var link in request.Links)
-        {
-            try
-            {
-                // Validate Player exists
-                var player = await _db.Players
-                    .Include(p => p.User)
-                    .FirstOrDefaultAsync(p => p.Id == link.PlayerId, ct);
-
-                if (player == null)
-                {
-                    results.Add(new BulkOperationItemDto
-                    {
-                        PlayerId = link.PlayerId,
-                        PlayerName = null,
-                        Success = false,
-                        ErrorMessage = "Player not found",
-                        Status = "Failed"
-                    });
-                    failedCount++;
-                    continue;
-                }
-
-                // Validate User exists
-                var user = await _userManager.FindByIdAsync(link.UserId);
-                if (user == null)
-                {
-                    results.Add(new BulkOperationItemDto
-                    {
-                        PlayerId = link.PlayerId,
-                        PlayerName = player.FullName,
-                        Success = false,
-                        ErrorMessage = "User not found",
-                        Status = "Failed"
-                    });
-                    failedCount++;
-                    continue;
-                }
-
-                // Check if Player already linked to another User
-                if (player.UserId != null && player.UserId != link.UserId)
-                {
-                    results.Add(new BulkOperationItemDto
-                    {
-                        PlayerId = link.PlayerId,
-                        PlayerName = player.FullName,
-                        Success = false,
-                        ErrorMessage = $"Player already linked to another user ({player.UserId})",
-                        Status = "Skipped"
-                    });
-                    skippedCount++;
-                    continue;
-                }
-
-                // Check if already linked to this user (idempotent)
-                if (player.UserId == link.UserId)
-                {
-                    results.Add(new BulkOperationItemDto
-                    {
-                        PlayerId = link.PlayerId,
-                        PlayerName = player.FullName,
-                        Success = true,
-                        ErrorMessage = "Already linked to this user",
-                        Status = "Skipped"
-                    });
-                    skippedCount++;
-                    continue;
-                }
-
-                // Link
-                player.UserId = link.UserId;
-                await _db.SaveChangesAsync(ct);
-
-                results.Add(new BulkOperationItemDto
-                {
-                    PlayerId = link.PlayerId,
-                    PlayerName = player.FullName,
-                    Success = true,
-                    ErrorMessage = null,
-                    Status = "Success"
-                });
-                successCount++;
-            }
-            catch (Exception ex)
-            {
-                results.Add(new BulkOperationItemDto
-                {
-                    PlayerId = link.PlayerId,
-                    PlayerName = null,
-                    Success = false,
-                    ErrorMessage = ex.Message,
-                    Status = "Failed"
-                });
-                failedCount++;
-            }
-        }
-
-        return new BulkOperationResultDto
-        {
-            TotalRequested = request.Links.Count,
-            SuccessCount = successCount,
-            FailedCount = failedCount,
-            SkippedCount = skippedCount,
-            Results = results,
-            ProcessedAt = DateTime.UtcNow
-        };
-    }
-
-    /// <summary>
-    /// BULK UNLINK PLAYERS - Unlink multiple players from users at once
-    /// </summary>
-    public async Task<BulkOperationResultDto> BulkUnlinkPlayersAsync(BulkUnlinkPlayersDto request, CancellationToken ct = default)
-    {
-        var results = new List<BulkOperationItemDto>();
-        var successCount = 0;
-        var failedCount = 0;
-        var skippedCount = 0;
-
-        foreach (var playerId in request.PlayerIds)
-        {
-            try
-            {
-                var player = await _db.Players.FindAsync(new object[] { playerId }, ct);
-
-                if (player == null)
-                {
-                    results.Add(new BulkOperationItemDto
-                    {
-                        PlayerId = playerId,
-                        PlayerName = null,
-                        Success = false,
-                        ErrorMessage = "Player not found",
-                        Status = "Failed"
-                    });
-                    failedCount++;
-                    continue;
-                }
-
-                // Check if player is not linked
-                if (player.UserId == null)
-                {
-                    results.Add(new BulkOperationItemDto
-                    {
-                        PlayerId = playerId,
-                        PlayerName = player.FullName,
-                        Success = false,
-                        ErrorMessage = "Player is not linked to any user",
-                        Status = "Skipped"
-                    });
-                    skippedCount++;
-                    continue;
-                }
-
-                // Unlink
-                player.UserId = null;
-                await _db.SaveChangesAsync(ct);
-
-                results.Add(new BulkOperationItemDto
-                {
-                    PlayerId = playerId,
-                    PlayerName = player.FullName,
-                    Success = true,
-                    ErrorMessage = null,
-                    Status = "Success"
-                });
-                successCount++;
-            }
-            catch (Exception ex)
-            {
-                results.Add(new BulkOperationItemDto
-                {
-                    PlayerId = playerId,
-                    PlayerName = null,
-                    Success = false,
-                    ErrorMessage = ex.Message,
-                    Status = "Failed"
-                });
-                failedCount++;
-            }
-        }
-
-        return new BulkOperationResultDto
-        {
-            TotalRequested = request.PlayerIds.Count,
-            SuccessCount = successCount,
-            FailedCount = failedCount,
-            SkippedCount = skippedCount,
-            Results = results,
-            ProcessedAt = DateTime.UtcNow
-        };
-    }
-
-    // ===== User Self-Claim APIs =====
-
-    public async Task<ClaimPlayerResponse?> ClaimPlayerAsync(
-        int playerId, 
-        string userId, 
-        bool updateUserProfile = false, 
-        CancellationToken ct = default)
-    {
-        var player = await _db.Players
-            .Include(p => p.User)
-            .FirstOrDefaultAsync(p => p.Id == playerId, ct);
-        
-        if (player == null) return null;
-
-        // Already claimed by another user
-        if (player.UserId != null && player.UserId != userId)
-            return null;
-
-        // Get current user
-        var user = await _userManager.FindByIdAsync(userId);
-        if (user == null) return null;
-
-        // Validation: Email must match
-        if (string.IsNullOrWhiteSpace(player.Email) || 
-            string.IsNullOrWhiteSpace(user.Email) ||
-            !player.Email.Equals(user.Email, StringComparison.OrdinalIgnoreCase))
-        {
-            return null; // Email không match
-        }
-
-        // Claim
-        player.UserId = userId;
-
-        // Optional: Update user profile from player data
-        if (updateUserProfile)
-        {
-            if (!string.IsNullOrWhiteSpace(player.Phone))
-                user.PhoneNumber = player.Phone;
-            
-            if (!string.IsNullOrWhiteSpace(player.City))
-                user.City = player.City;
-            
-            if (!string.IsNullOrWhiteSpace(player.Country))
-                user.Country = player.Country;
-
-            await _userManager.UpdateAsync(user);
-        }
-
-        await _db.SaveChangesAsync(ct);
-        
-        return new ClaimPlayerResponse
-        {
-            PlayerId = player.Id,
-            FullName = player.FullName,
-            Email = player.Email,
-            UserId = userId,
-            Message = "Player claimed successfully."
-        };
-    }
-
-    public async Task<List<ClaimablePlayerDto>> GetClaimablePlayersAsync(string userEmail, CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(userEmail))
-            return new List<ClaimablePlayerDto>();
-
-        var players = await _db.Players
-            .AsNoTracking()
-            .Where(p => p.Email != null && p.Email.ToLower() == userEmail.ToLower())
-            .Select(p => new ClaimablePlayerDto
-            {
-                Id = p.Id,
-                FullName = p.FullName,
-                Email = p.Email,
-                Phone = p.Phone,
-                Country = p.Country,
-                City = p.City,
-                SkillLevel = p.SkillLevel,
-                CreatedAt = p.CreatedAt,
-                IsClaimed = p.UserId != null,
-                EmailMatches = true
-            })
-            .OrderByDescending(p => p.CreatedAt)
-            .ToListAsync(ct);
-
-        return players;
-    }
-
-    public async Task<List<PlayerListDto>> GetMyPlayersAsync(string userId, CancellationToken ct = default)
-    {
-        // Same as GetPlayersByUserIdAsync but for authenticated user
-        return await GetPlayersByUserIdAsync(userId, ct);
-    }
-
     public async Task<DataQualityReportDto> GetDataQualityReportAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
@@ -1234,7 +680,6 @@ public class AdminPlayerService : IAdminPlayerService
             // Build base query with same filters as GetPlayersAsync
             var query = _db.Players
                 .AsNoTracking()
-                .Include(p => p.User)
                 .AsQueryable();
 
             // Reuse filters (subset for export performance)
@@ -1260,12 +705,6 @@ public class AdminPlayerService : IAdminPlayerService
             if (!string.IsNullOrWhiteSpace(filter.City))
             {
                 query = query.Where(p => p.City == filter.City);
-            }
-            if (filter.HasLinkedAccount.HasValue)
-            {
-                query = filter.HasLinkedAccount.Value
-                    ? query.Where(p => p.UserId != null)
-                    : query.Where(p => p.UserId == null);
             }
             if (filter.CreatedFrom.HasValue)
             {
@@ -1297,11 +736,10 @@ public class AdminPlayerService : IAdminPlayerService
             if (!includeTournamentHistory)
             {
                 // Header
-                sb.AppendLine("PlayerId,FullName,Nickname,Email,Phone,Country,City,SkillLevel,LinkedUserId,LinkedUserEmail,CreatedAt");
+                sb.AppendLine("PlayerId,FullName,Nickname,Email,Phone,Country,City,SkillLevel,CreatedAt");
 
                 foreach (var p in players)
                 {
-                    var linkedEmail = p.User?.Email ?? string.Empty;
                     sb.AppendLine(
                         $"\"{p.Id}\"," +
                         $"\"{p.FullName}\"," +
@@ -1311,8 +749,6 @@ public class AdminPlayerService : IAdminPlayerService
                         $"\"{p.Country}\"," +
                         $"\"{p.City}\"," +
                         $"{(p.SkillLevel?.ToString() ?? string.Empty)}," +
-                        $"\"{p.UserId}\"," +
-                        $"\"{linkedEmail}\"," +
                         $"{p.CreatedAt:yyyy-MM-dd HH:mm:ss}"
                     );
                 }
@@ -1320,7 +756,7 @@ public class AdminPlayerService : IAdminPlayerService
             else
             {
                 // Header with tournament columns (flattened, pipe-separated)
-                sb.AppendLine("PlayerId,FullName,Email,Phone,Country,City,SkillLevel,LinkedUserEmail,CreatedAt,TournamentsCount,LastTournamentDate,TournamentHistory");
+                sb.AppendLine("PlayerId,FullName,Email,Phone,Country,City,SkillLevel,CreatedAt,TournamentsCount,LastTournamentDate,TournamentHistory");
 
                 foreach (var p in players)
                 {
@@ -1345,7 +781,6 @@ public class AdminPlayerService : IAdminPlayerService
                         $"\"{p.Country}\"," +
                         $"\"{p.City}\"," +
                         $"{(p.SkillLevel?.ToString() ?? string.Empty)}," +
-                        $"\"{p.User?.Email}\"," +
                         $"{p.CreatedAt:yyyy-MM-dd HH:mm:ss}," +
                         $"{tournaments.Count}," +
                         $"{(lastDate.HasValue ? lastDate.Value.ToString("yyyy-MM-dd") : string.Empty)}," +

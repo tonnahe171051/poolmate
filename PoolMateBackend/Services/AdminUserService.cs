@@ -27,10 +27,8 @@ public class AdminUserService : IAdminUserService
         _db = db;
         _logger = logger;
     }
-
-    /// <summary>
+    
     /// GET ALL USERS với phân trang, filter, search, sort
-    /// </summary>
     public async Task<Response> GetUsersAsync(AdminUserFilterDto filter, CancellationToken ct)
     {
         try
@@ -196,10 +194,8 @@ public class AdminUserService : IAdminUserService
             return Response.Error("Error fetching users list");
         }
     }
-
-    /// <summary>
+    
     /// Helper method để apply sorting logic
-    /// </summary>
     private IQueryable<ApplicationUser> ApplySorting(
         IQueryable<ApplicationUser> query, 
         string? sortBy, 
@@ -248,10 +244,8 @@ public class AdminUserService : IAdminUserService
             _ => query.OrderByDescending(u => u.CreatedAt) // Default
         };
     }
-
-    /// <summary>
+    
     /// GET USER DETAIL - Lấy thông tin chi tiết của 1 user với full context
-    /// </summary>
     public async Task<Response> GetUserDetailAsync(string userId, CancellationToken ct)
     {
         try
@@ -363,12 +357,8 @@ public class AdminUserService : IAdminUserService
             return Response.Error("Error fetching user detail");
         }
     }
-
-    /// <summary>
+    
     /// DEACTIVATE USER - Vô hiệu hóa tài khoản user (lock vĩnh viễn)
-    /// Sử dụng LockoutEnd = DateTimeOffset.MaxValue để lock vĩnh viễn
-    /// User không thể login nhưng dữ liệu vẫn được giữ lại trong hệ thống
-    /// </summary>
     public async Task<Response> DeactivateUserAsync(string userId, CancellationToken ct)
     {
         try
@@ -428,11 +418,8 @@ public class AdminUserService : IAdminUserService
             return Response.Error("Error deactivating user");
         }
     }
-
-    /// <summary>
+    
     /// REACTIVATE USER - Kích hoạt lại tài khoản đã bị deactivate
-    /// Xóa lockout để user có thể login lại
-    /// </summary>
     public async Task<Response> ReactivateUserAsync(string userId, CancellationToken ct)
     {
         try
@@ -484,9 +471,8 @@ public class AdminUserService : IAdminUserService
         }
     }
 
-    /// <summary>
+
     /// GET USER STATISTICS - Lấy thống kê tổng quan về users
-    /// </summary>
     public async Task<Response> GetUserStatisticsAsync(CancellationToken ct)
     {
         try
@@ -636,10 +622,8 @@ public class AdminUserService : IAdminUserService
             return Response.Error("Error fetching user statistics");
         }
     }
-
-    /// <summary>
+    
     /// GET USER ACTIVITY LOG - Lấy activity log của 1 user
-    /// </summary>
     public async Task<Response> GetUserActivityLogAsync(string userId, CancellationToken ct)
     {
         try
@@ -665,10 +649,7 @@ public class AdminUserService : IAdminUserService
             var posts = await _db.Posts
                 .Where(p => p.UserId == userId)
                 .CountAsync(ct);
-
-            var venues = await _db.Venues
-                .Where(v => v.CreatedByUserId == userId)
-                .CountAsync(ct);
+            
 
             // Build activity summary
             var activitySummary = new UserActivitySummaryDto
@@ -676,7 +657,6 @@ public class AdminUserService : IAdminUserService
                 TotalPlayers = claimedPlayers,
                 TotalTournaments = tournaments.Count,
                 TotalPosts = posts,
-                TotalVenues = venues,
                 TotalLoginAttempts = 0,  // Không track trong DB
                 FailedLoginAttempts = user.AccessFailedCount,
                 LastLoginAt = null,  // Không track trong DB
@@ -751,10 +731,8 @@ public class AdminUserService : IAdminUserService
             return Response.Error("Error fetching user activity log");
         }
     }
-
-    /// <summary>
+    
     /// BULK DEACTIVATE USERS - Deactivate nhiều users cùng lúc
-    /// </summary>
     public async Task<Response> BulkDeactivateUsersAsync(BulkDeactivateUsersDto request, CancellationToken ct)
     {
         try
@@ -880,10 +858,8 @@ public class AdminUserService : IAdminUserService
             return Response.Error("Error processing bulk deactivate operation");
         }
     }
-
-    /// <summary>
+    
     /// BULK REACTIVATE USERS - Reactivate nhiều users cùng lúc
-    /// </summary>
     public async Task<Response> BulkReactivateUsersAsync(BulkReactivateUsersDto request, CancellationToken ct)
     {
         try
@@ -994,10 +970,8 @@ public class AdminUserService : IAdminUserService
             return Response.Error("Error processing bulk reactivate operation");
         }
     }
-
-    /// <summary>
+    
     /// EXPORT USERS - Export danh sách users ra CSV
-    /// </summary>
     public async Task<Response> ExportUsersAsync(AdminUserFilterDto filter, CancellationToken ct)
     {
         try

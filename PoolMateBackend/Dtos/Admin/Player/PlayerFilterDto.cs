@@ -46,11 +46,6 @@ public class PlayerFilterDto
     public int? MaxSkillLevel { get; set; }
     
     /// <summary>
-    /// Filter by linked status: true = has linked user, false = no linked user, null = all
-    /// </summary>
-    public bool? HasLinkedAccount { get; set; }
-    
-    /// <summary>
     /// Filter by created date from (inclusive)
     /// </summary>
     public DateTime? CreatedFrom { get; set; }

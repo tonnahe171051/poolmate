@@ -1,29 +1,5 @@
 namespace PoolMate.Api.Dtos.Admin.Player;
 
-/// <summary>
-/// DTO for bulk link players to users
-/// </summary>
-public class BulkLinkPlayersDto
-{
-    public List<PlayerUserLinkDto> Links { get; set; } = new();
-    public string? Reason { get; set; }
-}
-
-
-public class PlayerUserLinkDto
-{
-    public int PlayerId { get; set; }
-    public string UserId { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// DTO for bulk unlink players
-/// </summary>
-public class BulkUnlinkPlayersDto
-{
-    public List<int> PlayerIds { get; set; } = new();
-    public string? Reason { get; set; }
-}
 
 /// <summary>
 /// DTO for bulk delete players

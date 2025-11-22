@@ -17,10 +17,6 @@ public class PlayerDetailDto
     public int? SkillLevel { get; set; }
     public DateTime CreatedAt { get; set; }
     
-    // Linked User Info
-    public bool HasLinkedAccount { get; set; }
-    public LinkedUserDetailDto? LinkedUser { get; set; }
-    
     // Tournament Statistics
     public TournamentStatsDto TournamentStats { get; set; } = new();
     
@@ -28,20 +24,6 @@ public class PlayerDetailDto
     public List<PlayerTournamentHistoryDto> RecentTournaments { get; set; } = new();
 }
 
-/// <summary>
-/// Thông tin chi tiết User đã link với Player
-/// </summary>
-public class LinkedUserDetailDto
-{
-    public string UserId { get; set; } = string.Empty;
-    public string? Email { get; set; }
-    public string? UserName { get; set; }
-    public string? FullName { get; set; }
-    public string? Nickname { get; set; }
-    public string? PhoneNumber { get; set; }
-    public string? ProfilePicture { get; set; }
-    public DateTime CreatedAt { get; set; }
-}
 
 /// <summary>
 /// Thống kê tournament của Player

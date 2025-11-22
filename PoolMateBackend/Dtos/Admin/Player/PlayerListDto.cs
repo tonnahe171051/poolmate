@@ -14,9 +14,5 @@ public class PlayerListDto
     public string? City { get; set; }
     public int? SkillLevel { get; set; }
     public DateTime CreatedAt { get; set; }
-    
-    // Linked User info
-    public string? LinkedUserId { get; set; }
-    public string? LinkedUserEmail { get; set; }
 }
 

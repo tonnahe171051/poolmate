@@ -25,7 +25,6 @@ public class UserActivitySummaryDto
     public int TotalPlayers { get; set; }  // Số players đã claim
     public int TotalTournaments { get; set; }  // Số tournaments tham gia
     public int TotalPosts { get; set; }  // Số posts đã tạo
-    public int TotalVenues { get; set; }  // Số venues đã tạo (nếu là organizer)
     
     // Security events
     public int TotalLoginAttempts { get; set; }  // Từ AccessFailedCount
@@ -42,9 +41,7 @@ public class UserActivitySummaryDto
     public DateTime? LastActivityAt { get; set; }
 }
 
-/// <summary>
-/// Một activity entry
-/// </summary>
+
 public class ActivityEntryDto
 {
     public string ActivityType { get; set; } = string.Empty;  // "Tournament", "Post", "Player", "Login"

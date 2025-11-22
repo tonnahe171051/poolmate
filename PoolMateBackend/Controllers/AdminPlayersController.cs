@@ -37,16 +37,6 @@ public class AdminPlayersController : ControllerBase
         var result = await _service.GetPlayerStatisticsAsync(ct);
         return Ok(result);
     }
-    
-    /// Get danh sách Players chưa claim (chưa link với User) với filter, search, sort và pagination
-    [HttpGet("unclaimed")]
-    public async Task<ActionResult<PagingList<UnclaimedPlayerDto>>> GetUnclaimedPlayers(
-        [FromQuery] PlayerFilterDto filter,
-        CancellationToken ct)
-    {
-        var result = await _service.GetUnclaimedPlayersAsync(filter, ct);
-        return Ok(result);
-    }
 
 
     /// Get chi tiết Player theo ID
@@ -59,101 +49,6 @@ public class AdminPlayersController : ControllerBase
         if (result == null)
             return NotFound(new { message = "Player not found." });
 
-        return Ok(result);
-    }
-
-
-
-    /// Link Player với User
-    [HttpPost("{playerId}/link-user")]
-    public async Task<IActionResult> LinkPlayerToUser(
-        int playerId,
-        [FromBody] LinkPlayerToUserDto dto,
-        CancellationToken ct)
-    {
-        var success = await _service.LinkPlayerToUserAsync(playerId, dto.UserId, ct);
-        if (!success)
-            return BadRequest(new { message = "Failed to link player to user. Player or user not found, or player already linked to another user." });
-
-        return Ok(new { message = "Player linked to user successfully." });
-    }
-
-
-    /// Unlink Player khỏi User
-    [HttpPost("{playerId}/unlink-user")]
-    public async Task<IActionResult> UnlinkPlayerFromUser(
-        int playerId,
-        CancellationToken ct)
-    {
-        var success = await _service.UnlinkPlayerFromUserAsync(playerId, ct);
-        if (!success)
-            return NotFound(new { message = "Player not found." });
-
-        return Ok(new { message = "Player unlinked from user successfully." });
-    }
-
-
-    /// Get tất cả Players của 1 User
-    [HttpGet("user/{userId}")]
-    public async Task<ActionResult<List<PlayerListDto>>> GetPlayersByUser(
-        string userId,
-        CancellationToken ct)
-    {
-        var players = await _service.GetPlayersByUserIdAsync(userId, ct);
-        return Ok(players);
-    }
-
-
-    /// Get User đã link với Player
-    [HttpGet("{playerId}/linked-user")]
-    public async Task<ActionResult<UserInfoDto>> GetLinkedUser(
-        int playerId,
-        CancellationToken ct)
-    {
-        var user = await _service.GetLinkedUserAsync(playerId, ct);
-        if (user == null)
-            return NotFound(new { message = "Player not linked to any user." });
-
-        return Ok(user);
-    }
-
-
-    /// POST: api/admin/players/bulk-link
-    /// Bulk link multiple players to users at once
-
-    [HttpPost("bulk-link")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> BulkLinkPlayers(
-        [FromBody] BulkLinkPlayersDto request,
-        CancellationToken ct)
-    {
-        if (request.Links == null || !request.Links.Any())
-        {
-            return BadRequest(new { message = "Links list cannot be empty" });
-        }
-
-        var result = await _service.BulkLinkPlayersAsync(request, ct);
-        return Ok(result);
-    }
-
-
-    /// POST: api/admin/players/bulk-unlink
-    /// Bulk unlink multiple players from users at once
-
-    [HttpPost("bulk-unlink")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> BulkUnlinkPlayers(
-        [FromBody] BulkUnlinkPlayersDto request,
-        CancellationToken ct)
-    {
-        if (request.PlayerIds == null || !request.PlayerIds.Any())
-        {
-            return BadRequest(new { message = "PlayerIds list cannot be empty" });
-        }
-
-        var result = await _service.BulkUnlinkPlayersAsync(request, ct);
         return Ok(result);
     }
 

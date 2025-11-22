@@ -1,8 +1,6 @@
 namespace PoolMate.Api.Dtos.Admin.Player;
 
-/// <summary>
 /// DTO for data quality report
-/// </summary>
 public class DataQualityReportDto
 {
     public DataQualityOverviewDto Overview { get; set; } = new();
@@ -11,9 +9,7 @@ public class DataQualityReportDto
     public DateTime GeneratedAt { get; set; }
 }
 
-/// <summary>
 /// Overview of data quality
-/// </summary>
 public class DataQualityOverviewDto
 {
     public int TotalPlayers { get; set; }
@@ -23,9 +19,7 @@ public class DataQualityOverviewDto
     public double HealthyPercentage { get; set; }
 }
 
-/// <summary>
 /// Detailed breakdown of issues
-/// </summary>
 public class DataQualityIssuesDto
 {
     // Missing data
@@ -47,18 +41,14 @@ public class DataQualityIssuesDto
     public int PotentialDuplicates { get; set; }
 }
 
-/// <summary>
 /// List of players with specific data quality issues
-/// </summary>
 public class PlayersWithIssuesDto
 {
     public List<PlayerIssueDto> Players { get; set; } = new();
     public int TotalCount { get; set; }
 }
 
-/// <summary>
 /// Player with data quality issues
-/// </summary>
 public class PlayerIssueDto
 {
     public int Id { get; set; }
@@ -70,9 +60,7 @@ public class PlayerIssueDto
     public DateTime? LastTournamentDate { get; set; }
 }
 
-/// <summary>
 /// DTO for player validation request
-/// </summary>
 public class ValidatePlayerDto
 {
     public string? Email { get; set; }
@@ -80,18 +68,14 @@ public class ValidatePlayerDto
     public int? SkillLevel { get; set; }
 }
 
-/// <summary>
 /// Result of player validation
-/// </summary>
 public class ValidationResultDto
 {
     public bool IsValid { get; set; }
     public List<ValidationErrorDto> Errors { get; set; } = new();
 }
 
-/// <summary>
 /// Validation error detail
-/// </summary>
 public class ValidationErrorDto
 {
     public string Field { get; set; } = string.Empty;
