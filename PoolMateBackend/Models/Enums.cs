@@ -29,5 +29,7 @@
 
     public enum BracketCreationType { Automatic, Manual }
 
+    public enum MatchSlotSourceType { Seed, WinnerOf, LoserOf }
+
 
 }

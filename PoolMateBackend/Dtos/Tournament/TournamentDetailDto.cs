@@ -12,13 +12,13 @@ namespace PoolMate.Api.Dtos.Tournament
         public DateTime? EndUtc { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
-        
+
         // Tournament settings
         public bool IsPublic { get; set; }
         public bool OnlineRegistrationEnabled { get; set; }
         public bool IsStarted { get; set; }
         public TournamentStatus Status { get; set; }
-        
+
         // Game settings
         public PlayerType PlayerType { get; set; }
         public BracketType BracketType { get; set; }
@@ -30,19 +30,24 @@ namespace PoolMate.Api.Dtos.Tournament
         public int? FinalsRaceTo { get; set; }
         public Rule Rule { get; set; }
         public BreakFormat? BreakFormat { get; set; }
-        
+
         public decimal? EntryFee { get; set; }
         public decimal? AdminFee { get; set; }
         public decimal? AddedMoney { get; set; }
         public PayoutMode? PayoutMode { get; set; }
         public int? PayoutTemplateId { get; set; }
         public decimal? TotalPrize { get; set; }
-        
+
         public string? FlyerUrl { get; set; }
-        
+
         public string CreatorName { get; set; } = default!;
         public VenueDto? Venue { get; set; }
-        
+
+        public bool IsMultiStage { get; set; }
+        public int? AdvanceToStage2Count { get; set; }
+        public BracketOrdering Stage1Ordering { get; set; }
+        public BracketOrdering Stage2Ordering { get; set; }
+
         // Counts
         public int TotalPlayers { get; set; }
         public int TotalTables { get; set; }

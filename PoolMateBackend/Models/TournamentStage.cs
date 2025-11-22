@@ -19,6 +19,7 @@
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+        public DateTime? CompletedAt { get; set; }
 
         public ICollection<Match> Matches { get; set; } = new List<Match>();
     }

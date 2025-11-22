@@ -91,8 +91,10 @@ public class TournamentService : ITournamentService
                 throw new InvalidOperationException("AdvanceToStage2Count is required for multi-stage tournaments.");
 
             var adv = m.AdvanceToStage2Count.Value;
+            if (adv < 4)
+                throw new InvalidOperationException("AdvanceToStage2Count must be at least 4 for multi-stage tournaments.");
             if ((adv & (adv - 1)) != 0)
-                throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2 (2,4,8,16,...)");
+                throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2 (4,8,16,...)");
         }
 
         // ✅ LOGIC MAPPING THEO IsMultiStage
@@ -216,7 +218,9 @@ public class TournamentService : ITournamentService
                 {
                     var adv = m.AdvanceToStage2Count.Value;
                     if (adv <= 0 || (adv & (adv - 1)) != 0)
-                        throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2.");
+                        throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2 (4,8,16,...).");
+                    if (adv < 4)
+                        throw new InvalidOperationException("AdvanceToStage2Count must be at least 4.");
                 }
             }
 
@@ -267,6 +271,10 @@ public class TournamentService : ITournamentService
                 if (m.AdvanceToStage2Count.HasValue)
                 {
                     t.AdvanceToStage2Count = m.AdvanceToStage2Count.Value;
+                }
+                else if (t.AdvanceToStage2Count.HasValue && t.AdvanceToStage2Count.Value < 4)
+                {
+                    throw new InvalidOperationException("AdvanceToStage2Count must be at least 4 for multi-stage tournaments.");
                 }
                 if (m.Stage2Ordering.HasValue)
                 {
@@ -1103,6 +1111,13 @@ public class TournamentService : ITournamentService
                 Rule = x.Rule,
                 BreakFormat = x.BreakFormat,
 
+                // ✅ MULTI-STAGE SETTINGS - MISSING!
+                IsMultiStage = x.IsMultiStage,
+                AdvanceToStage2Count = x.AdvanceToStage2Count,
+                Stage1Ordering = x.Stage1Ordering,
+                Stage2Ordering = x.Stage2Ordering,
+
+                // Payout settings
                 EntryFee = x.EntryFee,
                 AdminFee = x.AdminFee,
                 AddedMoney = x.AddedMoney,
@@ -1128,6 +1143,7 @@ public class TournamentService : ITournamentService
 
         return tournament;
     }
+
     public async Task<bool> DeleteTournamentAsync(int id, string ownerUserId, CancellationToken ct)
     {
         var tournament = await _db.Tournaments

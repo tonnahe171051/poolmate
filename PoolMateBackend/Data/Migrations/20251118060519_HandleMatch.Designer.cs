@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PoolMate.Api.Data;
 
@@ -11,9 +12,11 @@ using PoolMate.Api.Data;
 namespace PoolMate.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251118060519_HandleMatch")]
+    partial class HandleMatch
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -338,7 +341,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("StageId", "Bracket", "RoundNo");
 
-                    b.ToTable("Matches", (string)null);
+                    b.ToTable("Matches");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.PayoutTemplate", b =>
@@ -371,7 +374,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("MinPlayers", "MaxPlayers", "Places");
 
-                    b.ToTable("PayoutTemplates", (string)null);
+                    b.ToTable("PayoutTemplates");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Player", b =>
@@ -418,7 +421,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Players", (string)null);
+                    b.ToTable("Players");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Post", b =>
@@ -457,7 +460,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Posts", (string)null);
+                    b.ToTable("Posts");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Tournament", b =>
@@ -590,7 +593,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("VenueId");
 
-                    b.ToTable("Tournaments", null, t =>
+                    b.ToTable("Tournaments", t =>
                         {
                             t.HasCheckConstraint("CK_Tournament_Advance_PowerOfTwo", "[AdvanceToStage2Count] IS NULL OR ([AdvanceToStage2Count] > 0 AND ([AdvanceToStage2Count] & ([AdvanceToStage2Count]-1)) = 0)");
                         });
@@ -659,7 +662,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("TournamentId", "Status");
 
-                    b.ToTable("TournamentPlayers", (string)null);
+                    b.ToTable("TournamentPlayers");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.TournamentStage", b =>
@@ -672,9 +675,6 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.Property<int?>("AdvanceCount")
                         .HasColumnType("int");
-
-                    b.Property<DateTime?>("CompletedAt")
-                        .HasColumnType("datetime2");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
@@ -702,7 +702,7 @@ namespace PoolMate.Api.Data.Migrations
                     b.HasIndex("TournamentId", "StageNo")
                         .IsUnique();
 
-                    b.ToTable("TournamentStages", (string)null);
+                    b.ToTable("TournamentStages");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.TournamentTable", b =>
@@ -743,7 +743,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("TournamentId");
 
-                    b.ToTable("TournamentTables", (string)null);
+                    b.ToTable("TournamentTables");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Venue", b =>
@@ -785,7 +785,7 @@ namespace PoolMate.Api.Data.Migrations
 
                     b.HasIndex("City", "Country");
 
-                    b.ToTable("Venues", (string)null);
+                    b.ToTable("Venues");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
