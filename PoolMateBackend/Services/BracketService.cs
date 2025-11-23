@@ -603,7 +603,9 @@ namespace PoolMate.Api.Services
             var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
 
             // Broadcast realtime updates
-            await PublishRealtimeUpdates(match, dto, bracketChanged: match.Status == MatchStatus.Completed, ct);
+            // bracketChanged = true if match completed OR table assignment changed
+            var tableAssignmentChanged = previousTableId != match.TableId;
+            await PublishRealtimeUpdates(match, dto, bracketChanged: match.Status == MatchStatus.Completed || tableAssignmentChanged, ct);
 
             return dto;
         }
