@@ -957,7 +957,8 @@ namespace PoolMate.Api.Services
                 var stageEval = await EvaluateStageAsync(match.StageId, ct);
                 var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
 
-                await PublishRealtimeUpdates(match, dto, bracketChanged: false, ct);
+                // Broadcast bracket update on score changes to keep bracket view in sync
+                await PublishRealtimeUpdates(match, dto, bracketChanged: true, ct);
 
                 return new MatchScoreUpdateResponse
                 {
