@@ -5,6 +5,7 @@ using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Admin.Player;
 using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Models;
+using PoolMate.Api.Dtos.Admin.Player;
 
 namespace PoolMate.Api.Services;
 
@@ -19,73 +20,45 @@ public class AdminPlayerService : IAdminPlayerService
         _userManager = userManager;
     }
 
-    // ===== Admin APIs =====
 
     public async Task<PagingList<PlayerListDto>> GetPlayersAsync(PlayerFilterDto filter, CancellationToken ct = default)
     {
-        // Start with base query
-        var query = _db.Players
-            .AsNoTracking()
-            .AsQueryable();
+        var query = _db.Players.AsNoTracking().AsQueryable();
 
-        // Apply filters
-        
-        // Search by full name (partial match, case-insensitive)
+        // 1. Search Tổng hợp
         if (!string.IsNullOrWhiteSpace(filter.SearchName))
         {
-            var searchTerm = filter.SearchName.ToLower();
-            query = query.Where(p => p.FullName.ToLower().Contains(searchTerm));
+            var term = filter.SearchName.ToLower().Trim();
+            query = query.Where(p =>
+                p.FullName.ToLower().Contains(term) ||
+                (p.Email != null && p.Email.ToLower().Contains(term)) ||
+                (p.Phone != null && p.Phone.Contains(term)) ||
+                (p.Nickname != null && p.Nickname.ToLower().Contains(term))
+            );
         }
 
-        // 🆕 Search by email (partial match, case-insensitive)
-        if (!string.IsNullOrWhiteSpace(filter.SearchEmail))
-        {
-            var searchEmail = filter.SearchEmail.ToLower();
-            query = query.Where(p => p.Email != null && p.Email.ToLower().Contains(searchEmail));
-        }
-
-        // 🆕 Search by phone (partial match)
-        if (!string.IsNullOrWhiteSpace(filter.SearchPhone))
-        {
-            var searchPhone = filter.SearchPhone;
-            query = query.Where(p => p.Phone != null && p.Phone.Contains(searchPhone));
-        }
-
-        // 🆕 Search by tournament name (players who participated)
+        // 2. Search theo Giải đấu
         if (!string.IsNullOrWhiteSpace(filter.SearchTournament))
         {
-            var searchTournament = filter.SearchTournament.ToLower();
-            var playerIdsInTournament = _db.TournamentPlayers
-                .Where(tp => tp.Tournament != null && tp.Tournament.Name.ToLower().Contains(searchTournament))
-                .Select(tp => tp.PlayerId)
-                .Distinct();
-            query = query.Where(p => playerIdsInTournament.Contains(p.Id));
+            var tourTerm = filter.SearchTournament.ToLower().Trim();
+            query = query.Where(p => p.TournamentPlayers.Any(tp =>
+                tp.Tournament.Name.ToLower().Contains(tourTerm)));
         }
 
-        // Filter by country
+        // 3. Filter thuộc tính cơ bản
         if (!string.IsNullOrWhiteSpace(filter.Country))
-        {
             query = query.Where(p => p.Country == filter.Country);
-        }
 
-        // Filter by city
         if (!string.IsNullOrWhiteSpace(filter.City))
-        {
             query = query.Where(p => p.City == filter.City);
-        }
 
-        // Filter by skill level range
         if (filter.MinSkillLevel.HasValue)
-        {
             query = query.Where(p => p.SkillLevel >= filter.MinSkillLevel.Value);
-        }
 
         if (filter.MaxSkillLevel.HasValue)
-        {
             query = query.Where(p => p.SkillLevel <= filter.MaxSkillLevel.Value);
-        }
 
-        // 🆕 Date range filters
+        // Xử lý lọc theo ngày tạo (CreatedFrom / CreatedTo)
         if (filter.CreatedFrom.HasValue)
         {
             query = query.Where(p => p.CreatedAt >= filter.CreatedFrom.Value);
@@ -93,83 +66,30 @@ public class AdminPlayerService : IAdminPlayerService
 
         if (filter.CreatedTo.HasValue)
         {
-            var toDate = filter.CreatedTo.Value.AddDays(1); // Include the end date
+            var toDate = filter.CreatedTo.Value.AddDays(1);
             query = query.Where(p => p.CreatedAt < toDate);
         }
 
-        // 🆕 Last tournament date filters (requires subquery)
-        if (filter.LastTournamentFrom.HasValue || filter.LastTournamentTo.HasValue)
-        {
-            var playersWithTournaments = _db.TournamentPlayers
-                .Include(tp => tp.Tournament)
-                .GroupBy(tp => tp.PlayerId)
-                .Select(g => new
-                {
-                    PlayerId = g.Key,
-                    LastTournamentDate = g.Max(tp => tp.Tournament!.StartUtc)
-                });
-
-            if (filter.LastTournamentFrom.HasValue)
-            {
-                var playerIds = playersWithTournaments
-                    .Where(pt => pt.LastTournamentDate >= filter.LastTournamentFrom.Value)
-                    .Select(pt => pt.PlayerId);
-                query = query.Where(p => playerIds.Contains(p.Id));
-            }
-
-            if (filter.LastTournamentTo.HasValue)
-            {
-                var playerIds = playersWithTournaments
-                    .Where(pt => pt.LastTournamentDate <= filter.LastTournamentTo.Value)
-                    .Select(pt => pt.PlayerId);
-                query = query.Where(p => playerIds.Contains(p.Id));
-            }
-        }
-
-        // 🆕 Data quality filters
+        // 4. Filter Data Quality
         if (filter.HasEmail.HasValue)
-        {
-            if (filter.HasEmail.Value)
-            {
-                query = query.Where(p => p.Email != null && p.Email != "");
-            }
-            else
-            {
-                query = query.Where(p => p.Email == null || p.Email == "");
-            }
-        }
+            query = query.Where(p =>
+                filter.HasEmail.Value ? (p.Email != null && p.Email != "") : (p.Email == null || p.Email == ""));
 
         if (filter.HasPhone.HasValue)
-        {
-            if (filter.HasPhone.Value)
-            {
-                query = query.Where(p => p.Phone != null && p.Phone != "");
-            }
-            else
-            {
-                query = query.Where(p => p.Phone == null || p.Phone == "");
-            }
-        }
+            query = query.Where(p =>
+                filter.HasPhone.Value ? (p.Phone != null && p.Phone != "") : (p.Phone == null || p.Phone == ""));
 
         if (filter.HasSkillLevel.HasValue)
         {
-            if (filter.HasSkillLevel.Value)
-            {
-                query = query.Where(p => p.SkillLevel != null);
-            }
-            else
-            {
-                query = query.Where(p => p.SkillLevel == null);
-            }
+            query = query.Where(p =>
+                filter.HasSkillLevel.Value ? p.SkillLevel != null : p.SkillLevel == null);
         }
 
-        // Get total count before pagination
-        var totalRecords = await query.CountAsync(ct);
-
-        // Apply sorting
+        // 5. Sắp xếp & Phân trang
         query = ApplySorting(query, filter.SortBy, filter.SortOrder);
 
-        // Apply pagination
+        var totalRecords = await query.CountAsync(ct);
+
         var items = await query
             .Skip((filter.PageIndex - 1) * filter.PageSize)
             .Take(filter.PageSize)
@@ -187,7 +107,6 @@ public class AdminPlayerService : IAdminPlayerService
             })
             .ToListAsync(ct);
 
-        // Return paginated result
         return PagingList<PlayerListDto>.Create(items, totalRecords, filter.PageIndex, filter.PageSize);
     }
 
@@ -195,13 +114,14 @@ public class AdminPlayerService : IAdminPlayerService
     {
         var player = await _db.Players
             .AsNoTracking()
+            .Include(p => p.User)
             .Include(p => p.TournamentPlayers)
-                .ThenInclude(tp => tp.Tournament)
+            .ThenInclude(tp => tp.Tournament)
             .FirstOrDefaultAsync(p => p.Id == playerId, ct);
 
         if (player == null) return null;
 
-        // Map basic info
+        // 1. Map thông tin cơ bản
         var result = new PlayerDetailDto
         {
             Id = player.Id,
@@ -212,10 +132,27 @@ public class AdminPlayerService : IAdminPlayerService
             Country = player.Country,
             City = player.City,
             SkillLevel = player.SkillLevel,
-            CreatedAt = player.CreatedAt
+            CreatedAt = player.CreatedAt,
+            LinkedUserId = player.UserId,
+            LinkedUserEmail = player.User?.Email,
+            LinkedUserAvatar = player.User?.ProfilePicture,
+            DataIssues = new List<string>()
         };
 
-        // Calculate tournament statistics
+        // 2.Kiểm tra Data Quality tại chỗ
+        if (string.IsNullOrWhiteSpace(player.Phone))
+            result.DataIssues.Add("Missing Phone");
+
+        if (player.SkillLevel == null)
+            result.DataIssues.Add("Missing Skill Level");
+
+        if (!string.IsNullOrWhiteSpace(player.Email) && !PlayerDataValidator.IsValidEmail(player.Email))
+            result.DataIssues.Add("Invalid Email Format");
+
+        if (!player.TournamentPlayers.Any())
+            result.DataIssues.Add("Never Played");
+
+        // 3. Tính toán thống kê giải đấu
         var tournaments = player.TournamentPlayers.ToList();
         var tournamentDates = tournaments
             .Where(tp => tp.Tournament != null)
@@ -226,15 +163,17 @@ public class AdminPlayerService : IAdminPlayerService
         result.TournamentStats = new TournamentStatsDto
         {
             TotalTournaments = tournaments.Count,
-            CompletedTournaments = tournaments.Count(tp => tp.Tournament != null && tp.Tournament.EndUtc.HasValue && tp.Tournament.EndUtc.Value < DateTime.UtcNow),
-            ActiveTournaments = tournaments.Count(tp => tp.Tournament != null && 
-                tp.Tournament.StartUtc <= DateTime.UtcNow && 
-                (!tp.Tournament.EndUtc.HasValue || tp.Tournament.EndUtc.Value >= DateTime.UtcNow)),
+            CompletedTournaments = tournaments.Count(tp =>
+                tp.Tournament != null && tp.Tournament.EndUtc.HasValue && tp.Tournament.EndUtc.Value < DateTime.UtcNow),
+            ActiveTournaments = tournaments.Count(tp => tp.Tournament != null &&
+                                                        tp.Tournament.StartUtc <= DateTime.UtcNow &&
+                                                        (!tp.Tournament.EndUtc.HasValue ||
+                                                         tp.Tournament.EndUtc.Value >= DateTime.UtcNow)),
             FirstTournamentDate = tournamentDates.FirstOrDefault(),
             LastTournamentDate = tournamentDates.LastOrDefault()
         };
 
-        // Map recent tournaments (top 10, newest first)
+        // 4. Lấy danh sách giải gần đây (Top 10)
         result.RecentTournaments = tournaments
             .Where(tp => tp.Tournament != null)
             .OrderByDescending(tp => tp.Tournament.StartUtc)
@@ -260,15 +199,15 @@ public class AdminPlayerService : IAdminPlayerService
         var today = now.Date;
         var last7Days = now.AddDays(-7);
         var last30Days = now.AddDays(-30);
-
-        // Get all players with related data
         var allPlayers = await _db.Players
             .AsNoTracking()
             .Include(p => p.TournamentPlayers)
+            .ThenInclude(tp => tp.Tournament)
             .ToListAsync(ct);
 
         var totalPlayers = allPlayers.Count;
-
+        var claimedPlayers = allPlayers.Count(p => !string.IsNullOrEmpty(p.UserId));
+        var unclaimedPlayers = totalPlayers - claimedPlayers;
 
         // Recent activity
         var playersCreatedLast30Days = allPlayers.Count(p => p.CreatedAt >= last30Days);
@@ -282,8 +221,8 @@ public class AdminPlayerService : IAdminPlayerService
             {
                 SkillLevel = g.Key,
                 Count = g.Count(),
-                Percentage = totalPlayers > 0 
-                    ? Math.Round((double)g.Count() / totalPlayers * 100, 2) 
+                Percentage = totalPlayers > 0
+                    ? Math.Round((double)g.Count() / totalPlayers * 100, 2)
                     : 0
             })
             .OrderBy(x => x.SkillLevel ?? int.MaxValue)
@@ -297,8 +236,8 @@ public class AdminPlayerService : IAdminPlayerService
             {
                 Location = g.Key!,
                 Count = g.Count(),
-                Percentage = totalPlayers > 0 
-                    ? Math.Round((double)g.Count() / totalPlayers * 100, 2) 
+                Percentage = totalPlayers > 0
+                    ? Math.Round((double)g.Count() / totalPlayers * 100, 2)
                     : 0
             })
             .OrderByDescending(x => x.Count)
@@ -313,8 +252,8 @@ public class AdminPlayerService : IAdminPlayerService
             {
                 Location = g.Key!,
                 Count = g.Count(),
-                Percentage = totalPlayers > 0 
-                    ? Math.Round((double)g.Count() / totalPlayers * 100, 2) 
+                Percentage = totalPlayers > 0
+                    ? Math.Round((double)g.Count() / totalPlayers * 100, 2)
                     : 0
             })
             .OrderByDescending(x => x.Count)
@@ -327,8 +266,8 @@ public class AdminPlayerService : IAdminPlayerService
 
         // Active players (có tournament trong 30 ngày qua)
         var activePlayersLast30Days = allPlayers
-            .Count(p => p.TournamentPlayers.Any(tp => 
-                tp.Tournament != null && 
+            .Count(p => p.TournamentPlayers.Any(tp =>
+                tp.Tournament != null &&
                 tp.Tournament.StartUtc >= last30Days));
 
         // Monthly growth trend (last 6 months)
@@ -339,8 +278,8 @@ public class AdminPlayerService : IAdminPlayerService
             var monthStartFirstDay = new DateTime(monthStart.Year, monthStart.Month, 1);
             var monthEnd = monthStartFirstDay.AddMonths(1);
 
-            var newPlayersInMonth = allPlayers.Count(p => 
-                p.CreatedAt >= monthStartFirstDay && 
+            var newPlayersInMonth = allPlayers.Count(p =>
+                p.CreatedAt >= monthStartFirstDay &&
                 p.CreatedAt < monthEnd);
 
             var totalPlayersUpToMonth = allPlayers.Count(p => p.CreatedAt < monthEnd);
@@ -358,6 +297,8 @@ public class AdminPlayerService : IAdminPlayerService
         return new PlayerStatisticsDto
         {
             TotalPlayers = totalPlayers,
+            ClaimedPlayers = claimedPlayers,
+            UnclaimedPlayers = unclaimedPlayers,
             PlayersCreatedLast30Days = playersCreatedLast30Days,
             PlayersCreatedLast7Days = playersCreatedLast7Days,
             PlayersCreatedToday = playersCreatedToday,
@@ -374,96 +315,137 @@ public class AdminPlayerService : IAdminPlayerService
     private string GetTournamentStatus(Tournament tournament)
     {
         var now = DateTime.UtcNow;
-        
         if (tournament.StartUtc > now)
             return "Upcoming";
-        
         if (tournament.EndUtc.HasValue && tournament.EndUtc.Value < now)
             return "Completed";
-        
         return "InProgress";
     }
 
     private IQueryable<Player> ApplySorting(IQueryable<Player> query, string sortBy, string sortOrder)
     {
-        var isDescending = sortOrder.Equals("desc", StringComparison.OrdinalIgnoreCase);
+        var isDesc = sortOrder != null && sortOrder.Equals("desc", StringComparison.OrdinalIgnoreCase);
 
-        return sortBy.ToLower() switch
+        IOrderedQueryable<Player> Sort<TKey>(System.Linq.Expressions.Expression<Func<Player, TKey>> keySelector)
         {
-            "createdat" => isDescending 
-                ? query.OrderByDescending(p => p.CreatedAt)
-                : query.OrderBy(p => p.CreatedAt),
-            "fullname" => isDescending
-                ? query.OrderByDescending(p => p.FullName)
-                : query.OrderBy(p => p.FullName),
-            "skilllevel" => isDescending
-                ? query.OrderByDescending(p => p.SkillLevel)
-                : query.OrderBy(p => p.SkillLevel),
-            "country" => isDescending
-                ? query.OrderByDescending(p => p.Country)
-                : query.OrderBy(p => p.Country),
-            "city" => isDescending
-                ? query.OrderByDescending(p => p.City)
-                : query.OrderBy(p => p.City),
-            _ => query.OrderByDescending(p => p.CreatedAt) // Default: newest first
+            return isDesc
+                ? query.OrderByDescending(keySelector)
+                : query.OrderBy(keySelector);
+        }
+
+        var orderedQuery = (sortBy?.ToLower()) switch
+        {
+            "fullname" => Sort(p => p.FullName),
+            "email" => Sort(p => p.Email),
+            "phone" => Sort(p => p.Phone),
+            "skilllevel" => Sort(p => p.SkillLevel),
+            "country" => Sort(p => p.Country),
+            "city" => Sort(p => p.City),
+            _ => isDesc ? query.OrderByDescending(p => p.CreatedAt) : query.OrderBy(p => p.CreatedAt)
         };
+        return orderedQuery.ThenBy(p => p.Id);
     }
+
     public async Task<DataQualityReportDto> GetDataQualityReportAsync(CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
         var oneYearAgo = now.AddYears(-1);
+        var query = _db.Players.AsNoTracking();
 
-        var players = await _db.Players
-            .AsNoTracking()
-            .Include(p => p.TournamentPlayers)
-            .ToListAsync(ct);
+        // Task A: Đếm số người "Inactive"
+        // Logic: Đã từng chơi VÀ (Không có giải nào trong 1 năm qua)
+        var inactivePlayers = await query
+            .Where(p => p.TournamentPlayers.Any())
+            .Where(p => !p.TournamentPlayers.Any(tp => tp.Tournament.StartUtc >= oneYearAgo))
+            .CountAsync(ct);
 
-        int total = players.Count;
-        int missingEmail = players.Count(p => string.IsNullOrWhiteSpace(p.Email));
-        int missingPhone = players.Count(p => string.IsNullOrWhiteSpace(p.Phone));
-        int missingSkill = players.Count(p => p.SkillLevel == null);
-        int missingLocation = players.Count(p => string.IsNullOrWhiteSpace(p.Country) || string.IsNullOrWhiteSpace(p.City));
+        // Task B: Đếm số người chưa từng chơi
+        var neverPlayedTournament = await query
+            .Where(p => !p.TournamentPlayers.Any())
+            .CountAsync(ct);
 
-        int invalidEmail = players.Count(p => !string.IsNullOrWhiteSpace(p.Email) && !PlayerDataValidator.IsValidEmail(p.Email));
-        int invalidPhone = players.Count(p => !string.IsNullOrWhiteSpace(p.Phone) && !PlayerDataValidator.IsValidPhone(p.Phone));
-        int invalidSkill = players.Count(p => p.SkillLevel.HasValue && !PlayerDataValidator.IsValidSkillLevel(p.SkillLevel));
-
-        // Last tournament dates per player
-        var lastTournamentByPlayer = players.ToDictionary(
-            p => p.Id,
-            p => p.TournamentPlayers
-                .Where(tp => tp.Tournament != null)
-                .Select(tp => (DateTime?)tp.Tournament!.StartUtc)
-                .DefaultIfEmpty(null)
-                .Max()
-        );
-
-        int inactivePlayers = lastTournamentByPlayer.Count(kv => kv.Value.HasValue && kv.Value.Value < oneYearAgo);
-        int neverPlayed = lastTournamentByPlayer.Count(kv => !kv.Value.HasValue);
-
-        // Potential duplicates (very simple heuristic: same non-empty email or very similar names)
-        int potentialDuplicates = 0;
-        var emailGroups = players
-            .Where(p => !string.IsNullOrWhiteSpace(p.Email))
-            .GroupBy(p => p.Email!.ToLower())
-            .Where(g => g.Count() > 1)
-            .ToList();
-        potentialDuplicates += emailGroups.Count;
-
-        // Name similarity (O(n^2) naive, limit to players created last 3 months to keep cheap)
-        var recentPlayers = players.Where(p => p.CreatedAt >= now.AddMonths(-3)).ToList();
-        for (int i = 0; i < recentPlayers.Count; i++)
+        // Task C: Tải dữ liệu THÔ về RAM
+        var players = await query.Select(p => new
         {
-            for (int j = i + 1; j < recentPlayers.Count; j++)
+            p.Id,
+            p.Email,
+            p.Phone,
+            p.SkillLevel,
+            p.Country,
+            p.City
+        }).ToListAsync(ct);
+
+        // Task D: Tổng số (Lấy luôn từ list trong RAM cho nhanh, đỡ phải query DB lần nữa)
+        var totalPlayers = players.Count;
+
+        // 3. Xử lý Validate & Đếm trên RAM (Logic cũ giữ nguyên)
+        int missingEmail = 0, missingPhone = 0, missingSkill = 0, missingLocation = 0;
+        int invalidEmail = 0, invalidPhone = 0, invalidSkill = 0;
+        int playersWithIssuesCount = 0;
+
+        var emailFrequency = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var p in players)
+        {
+            bool hasIssue = false;
+            // Check Missing
+            if (string.IsNullOrWhiteSpace(p.Email))
             {
-                var a = recentPlayers[i];
-                var b = recentPlayers[j];
-                if (string.IsNullOrWhiteSpace(a.FullName) || string.IsNullOrWhiteSpace(b.FullName)) continue;
-                int sim = PlayerDataValidator.CalculateSimilarity(a.FullName, b.FullName);
-                if (sim >= 90) { potentialDuplicates++; }
+                missingEmail++;
+                hasIssue = true;
             }
+
+            if (string.IsNullOrWhiteSpace(p.Phone))
+            {
+                missingPhone++;
+                hasIssue = true;
+            }
+
+            if (p.SkillLevel == null)
+            {
+                missingSkill++;
+                hasIssue = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(p.Country) || string.IsNullOrWhiteSpace(p.City))
+            {
+                missingLocation++;
+                hasIssue = true;
+            }
+
+            // Check Invalid
+            if (!string.IsNullOrWhiteSpace(p.Email))
+            {
+                if (!PlayerDataValidator.IsValidEmail(p.Email))
+                {
+                    invalidEmail++;
+                    hasIssue = true;
+                }
+
+                var emailKey = p.Email.Trim();
+                if (!emailFrequency.ContainsKey(emailKey)) emailFrequency[emailKey] = 0;
+                emailFrequency[emailKey]++;
+            }
+
+            if (!string.IsNullOrWhiteSpace(p.Phone) && !PlayerDataValidator.IsValidPhone(p.Phone))
+            {
+                invalidPhone++;
+                hasIssue = true;
+            }
+
+            if (p.SkillLevel.HasValue && !PlayerDataValidator.IsValidSkillLevel(p.SkillLevel.Value))
+            {
+                invalidSkill++;
+                hasIssue = true;
+            }
+
+            if (hasIssue) playersWithIssuesCount++;
         }
 
+        // Đếm số nhóm email bị trùng
+        int potentialDuplicates = emailFrequency.Count(kv => kv.Value > 1);
+
+        // 4. Đóng gói kết quả
         var issues = new DataQualityIssuesDto
         {
             MissingEmail = missingEmail,
@@ -474,37 +456,28 @@ public class AdminPlayerService : IAdminPlayerService
             InvalidPhone = invalidPhone,
             InvalidSkillLevel = invalidSkill,
             InactivePlayers = inactivePlayers,
-            NeverPlayedTournament = neverPlayed,
+            NeverPlayedTournament = neverPlayedTournament,
             PotentialDuplicates = potentialDuplicates
         };
 
-        int playersWithAnyIssues = 0;
-        foreach (var p in players)
-        {
-            bool hasIssue = string.IsNullOrWhiteSpace(p.Email)
-                || string.IsNullOrWhiteSpace(p.Phone)
-                || p.SkillLevel == null
-                || string.IsNullOrWhiteSpace(p.Country) || string.IsNullOrWhiteSpace(p.City)
-                || (!string.IsNullOrWhiteSpace(p.Email) && !PlayerDataValidator.IsValidEmail(p.Email))
-                || (!string.IsNullOrWhiteSpace(p.Phone) && !PlayerDataValidator.IsValidPhone(p.Phone))
-                || (p.SkillLevel.HasValue && !PlayerDataValidator.IsValidSkillLevel(p.SkillLevel));
-            if (hasIssue) playersWithAnyIssues++;
-        }
-
         var overview = new DataQualityOverviewDto
         {
-            TotalPlayers = total,
-            PlayersWithIssues = playersWithAnyIssues,
-            IssuePercentage = total > 0 ? Math.Round(playersWithAnyIssues * 100.0 / total, 2) : 0,
-            HealthyPlayers = total - playersWithAnyIssues,
-            HealthyPercentage = total > 0 ? Math.Round((total - playersWithAnyIssues) * 100.0 / total, 2) : 0
+            TotalPlayers = totalPlayers,
+            PlayersWithIssues = playersWithIssuesCount,
+            IssuePercentage = totalPlayers > 0 ? Math.Round((double)playersWithIssuesCount / totalPlayers * 100, 2) : 0,
+            HealthyPlayers = totalPlayers - playersWithIssuesCount,
+            HealthyPercentage = totalPlayers > 0
+                ? Math.Round((double)(totalPlayers - playersWithIssuesCount) / totalPlayers * 100, 2)
+                : 0
         };
 
         var recommendations = new List<string>();
-        if (missingEmail > 0) recommendations.Add($"{missingEmail} players missing email - consider contacting via phone or filling data");
-        if (invalidEmail > 0) recommendations.Add($"{invalidEmail} players with invalid email - fix format");
-        if (inactivePlayers > 0) recommendations.Add($"{inactivePlayers} players inactive > 1 year - consider archival");
-        if (potentialDuplicates > 0) recommendations.Add($"{potentialDuplicates} potential duplicate groups - review merge candidates");
+        if (potentialDuplicates > 0)
+            recommendations.Add($"{potentialDuplicates} duplicate email groups found - Use 'Merge' tool to fix.");
+        if (issues.MissingPhone > totalPlayers * 0.5)
+            recommendations.Add("High rate of missing phone numbers - Consider making Phone required.");
+        if (issues.InactivePlayers > totalPlayers * 0.3)
+            recommendations.Add($"{issues.InactivePlayers} inactive players - Consider archiving old data.");
 
         return new DataQualityReportDto
         {
@@ -515,119 +488,174 @@ public class AdminPlayerService : IAdminPlayerService
         };
     }
 
-    public async Task<PlayersWithIssuesDto> GetPlayersWithIssuesAsync(string issueType, CancellationToken ct = default)
+    public async Task<PlayersWithIssuesDto> GetPlayersWithIssuesAsync(string issueType, int pageIndex = 1,
+        int pageSize = 20, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
         var oneYearAgo = now.AddYears(-1);
-        var query = _db.Players
-            .AsNoTracking()
-            .Include(p => p.TournamentPlayers)
-            .AsQueryable();
+        var issueTypeLower = issueType.Trim().ToLower(); 
 
-        IQueryable<Models.Player> filtered = query;
-        switch (issueType.ToLower())
+        var query = _db.Players.AsNoTracking();
+
+        // 1. XÂY DỰNG FILTER (SQL WHERE)
+        switch (issueTypeLower)
         {
             case "missing-email":
-                filtered = filtered.Where(p => string.IsNullOrWhiteSpace(p.Email));
+                query = query.Where(p => p.Email == null || p.Email == "");
                 break;
             case "missing-phone":
-                filtered = filtered.Where(p => string.IsNullOrWhiteSpace(p.Phone));
+                query = query.Where(p => p.Phone == null || p.Phone == "");
                 break;
             case "missing-skill":
-                filtered = filtered.Where(p => p.SkillLevel == null);
-                break;
-            case "invalid-email":
-                filtered = filtered.Where(p => p.Email != null); // will validate in projection
-                break;
-            case "invalid-phone":
-                filtered = filtered.Where(p => p.Phone != null);
+                query = query.Where(p => p.SkillLevel == null);
                 break;
             case "inactive-1y":
-                filtered = filtered.Where(p => p.TournamentPlayers
-                    .Where(tp => tp.Tournament != null)
-                    .Select(tp => (DateTime?)tp.Tournament!.StartUtc)
-                    .DefaultIfEmpty(null)
-                    .Max() < oneYearAgo);
+                query = query
+                    .Where(p => p.TournamentPlayers.Any())
+                    .Where(p => !p.TournamentPlayers.Any(tp => tp.Tournament.StartUtc >= oneYearAgo));
                 break;
             case "never-played":
-                filtered = filtered.Where(p => !p.TournamentPlayers.Any());
+                query = query.Where(p => !p.TournamentPlayers.Any());
+                break;
+            case "invalid-email":
+                // Lọc sơ bộ: chỉ lấy người CÓ email để check sau
+                query = query.Where(p => p.Email != null && p.Email != "");
+                break;
+            case "invalid-phone":
+                // Lọc sơ bộ: chỉ lấy người CÓ phone
+                query = query.Where(p => p.Phone != null && p.Phone != "");
+                break;
+            case "potential-duplicates":
+                // A. Tìm danh sách Email bị trùng 
+                var duplicateEmails = _db.Players
+                    .Where(p => p.Email != null && p.Email != "")
+                    .GroupBy(p => p.Email)
+                    .Where(g => g.Count() > 1)
+                    .Select(g => g.Key);
+
+                // B. Tìm danh sách Phone bị trùng 
+                var duplicatePhones = _db.Players
+                    .Where(p => p.Phone != null && p.Phone != "")
+                    .GroupBy(p => p.Phone)
+                    .Where(g => g.Count() > 1)
+                    .Select(g => g.Key);
+
+                // C. Tìm nhóm "Tên + Thành phố + Skill" bị trùng 
+                // (Lưu ý: Nếu DB lớn, phần này có thể nặng, có thể bỏ qua nếu chỉ cần Email/Phone)
+                var duplicateContexts = _db.Players
+                    .Where(p => p.City != null && p.SkillLevel != null)
+                    .GroupBy(p => new { p.FullName, p.City, p.SkillLevel })
+                    .Where(g => g.Count() > 1)
+                    .Select(g => g.Key);
+
+                // D. GỘP LẠI: Lấy tất cả Player dính vào 1 trong 3 trường hợp trên
+                query = query.Where(p =>
+                    (p.Email != null && duplicateEmails.Contains(p.Email)) ||
+                    (p.Phone != null && duplicatePhones.Contains(p.Phone)) ||
+                    (p.City != null && p.SkillLevel != null &&
+                     duplicateContexts.Any(x =>
+                         x.FullName == p.FullName && x.City == p.City && x.SkillLevel == p.SkillLevel))
+                );
                 break;
             default:
-                // return empty
-                filtered = filtered.Where(p => false);
-                break;
+                return new PlayersWithIssuesDto();
         }
 
-        var list = await filtered
-            .Select(p => new PlayerIssueDto
-            {
-                Id = p.Id,
-                FullName = p.FullName,
-                Email = p.Email,
-                Phone = p.Phone,
-                Issues = new List<string>(),
-                CreatedAt = p.CreatedAt,
-                LastTournamentDate = p.TournamentPlayers
-                    .Where(tp => tp.Tournament != null)
-                    .Select(tp => (DateTime?)tp.Tournament!.StartUtc)
-                    .DefaultIfEmpty(null)
-                    .Max()
-            })
-            .ToListAsync(ct);
-
-        // Fill issue text for invalid email/phone cases
-        foreach (var item in list)
+        // Áp dụng sắp xếp ĐẶC BIỆT cho trường hợp trùng lặp
+        // Mục đích: Để các bản ghi trùng nhau nằm cạnh nhau trong danh sách trả về
+        if (issueTypeLower == "potential-duplicates")
         {
-            if (issueType.Equals("invalid-email", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!string.IsNullOrWhiteSpace(item.Email) && !PlayerDataValidator.IsValidEmail(item.Email))
-                    item.Issues.Add("Invalid email format");
-            }
-            if (issueType.Equals("invalid-phone", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!string.IsNullOrWhiteSpace(item.Phone) && !PlayerDataValidator.IsValidPhone(item.Phone))
-                    item.Issues.Add("Invalid phone format");
-            }
-            if (issueType.Equals("missing-email", StringComparison.OrdinalIgnoreCase))
-            {
-                if (string.IsNullOrWhiteSpace(item.Email)) item.Issues.Add("Missing email");
-            }
-            if (issueType.Equals("missing-phone", StringComparison.OrdinalIgnoreCase))
-            {
-                if (string.IsNullOrWhiteSpace(item.Phone)) item.Issues.Add("Missing phone");
-            }
-            if (issueType.Equals("missing-skill", StringComparison.OrdinalIgnoreCase))
-            {
-                item.Issues.Add("Missing skill level");
-            }
-            if (issueType.Equals("inactive-1y", StringComparison.OrdinalIgnoreCase))
-            {
-                item.Issues.Add(
-                    item.LastTournamentDate.HasValue ?
-                        $"Inactive since {item.LastTournamentDate:yyyy-MM-dd}" :
-                        "No tournament history"
-                );
-            }
-            if (issueType.Equals("never-played", StringComparison.OrdinalIgnoreCase))
-            {
-                item.Issues.Add("Never played a tournament");
-            }
+            query = query.OrderBy(p => p.Email)
+                .ThenBy(p => p.Phone)
+                .ThenBy(p => p.FullName);
         }
 
-        // For invalid-* types, only keep items that actually have the invalid issue
-        if (issueType.Equals("invalid-email", StringComparison.OrdinalIgnoreCase))
+        // Chuẩn bị Projection (chưa chạy)
+        var projection = query.Select(p => new PlayerIssueDto
         {
-            list = list.Where(x => x.Issues.Contains("Invalid email format")).ToList();
+            Id = p.Id,
+            FullName = p.FullName,
+            Email = p.Email,
+            Phone = p.Phone,
+            CreatedAt = p.CreatedAt,
+            LastTournamentDate = (issueTypeLower == "inactive-1y")
+                ? p.TournamentPlayers.Max(tp => tp.Tournament.StartUtc)
+                : null
+        });
+
+        // 2. THỰC THI & PHÂN TRANG (Chia 2 luồng)
+        List<PlayerIssueDto> pagedResult;
+        int totalCount;
+
+        // LUỒNG A: Xử lý In-Memory (Cho nhóm Invalid cần Regex)
+        if (issueTypeLower.StartsWith("invalid-"))
+        {
+            // Giới hạn lấy tối đa 2000 bản ghi để check Regex trong RAM
+            var candidates = await projection.Take(2000).ToListAsync(ct);
+            List<PlayerIssueDto> invalidItems;
+
+            if (issueTypeLower == "invalid-email")
+            {
+                invalidItems = candidates
+                    .Where(x => !PlayerDataValidator.IsValidEmail(x.Email))
+                    .ToList();
+                invalidItems.ForEach(x => x.Issues.Add("Invalid email format"));
+            }
+            else // invalid-phone
+            {
+                invalidItems = candidates
+                    .Where(x => !PlayerDataValidator.IsValidPhone(x.Phone))
+                    .ToList();
+                invalidItems.ForEach(x => x.Issues.Add("Invalid phone format"));
+            }
+
+            // Phân trang thủ công trên List
+            totalCount = invalidItems.Count;
+            pagedResult = invalidItems
+                .Skip((pageIndex - 1) * pageSize)
+                .Take(pageSize)
+                .ToList();
         }
-        if (issueType.Equals("invalid-phone", StringComparison.OrdinalIgnoreCase))
+        // LUỒNG B: Xử lý SQL thuần (Cho nhóm Missing/Activity/Duplicates - TỐI ƯU HƠN)
+        else
         {
-            list = list.Where(x => x.Issues.Contains("Invalid phone format")).ToList();
+            // Đếm tổng số bản ghi thỏa mãn điều kiện SQL
+            totalCount = await query.CountAsync(ct);
+
+            var queryPaged = projection;
+
+            // QUAN TRỌNG: Chỉ áp dụng sort mặc định nếu KHÔNG PHẢI là tìm trùng lặp
+            // Nếu là trùng lặp, ta giữ nguyên thứ tự sort Email/Phone đã định nghĩa ở trên
+            if (issueTypeLower != "potential-duplicates")
+            {
+                queryPaged = queryPaged.OrderBy(p => p.Id);
+            }
+
+            // Cắt trang ngay tại Database
+            pagedResult = await queryPaged
+                .Skip((pageIndex - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync(ct);
+
+            // Gán text lỗi
+            string issueText = issueTypeLower switch
+            {
+                "missing-email" => "Missing email",
+                "missing-phone" => "Missing phone",
+                "missing-skill" => "Missing skill level",
+                "inactive-1y" => "Inactive > 1 year",
+                "never-played" => "Never played",
+                "potential-duplicates" => "Potential duplicate", 
+                _ => "Unknown issue"
+            };
+
+            pagedResult.ForEach(x => x.Issues.Add(issueText));
         }
 
         return new PlayersWithIssuesDto
         {
-            Players = list,
-            TotalCount = list.Count
+            Players = pagedResult,
+            TotalCount = totalCount
         };
     }
 
@@ -670,143 +698,271 @@ public class AdminPlayerService : IAdminPlayerService
         return Task.FromResult(result);
     }
 
-    /// <summary>
-    /// EXPORT PLAYERS - Export danh sách players ra CSV (Excel fallback unsupported without external libs)
-    /// </summary>
-    public async Task<Response> ExportPlayersAsync(PlayerFilterDto filter, bool includeTournamentHistory, string format, CancellationToken ct)
+    public async Task<Response> ExportPlayersAsync(PlayerFilterDto filter, bool includeTournamentHistory, string format,
+        CancellationToken ct)
     {
         try
         {
-            // Build base query with same filters as GetPlayersAsync
-            var query = _db.Players
-                .AsNoTracking()
-                .AsQueryable();
+            var query = _db.Players.AsNoTracking().AsQueryable();
 
-            // Reuse filters (subset for export performance)
-            if (!string.IsNullOrWhiteSpace(filter.SearchName))
+            // 2. Tái sử dụng bộ lọc (DRY - Don't Repeat Yourself)
+            query = ApplyPlayerFilters(query, filter);
+            // 3. Tối ưu hóa việc lấy dữ liệu (Conditional Loading)
+            List<Player> players;
+            if (includeTournamentHistory)
             {
-                var searchTerm = filter.SearchName.ToLower();
-                query = query.Where(p => p.FullName.ToLower().Contains(searchTerm));
-            }
-            if (!string.IsNullOrWhiteSpace(filter.SearchEmail))
-            {
-                var searchEmail = filter.SearchEmail.ToLower();
-                query = query.Where(p => p.Email != null && p.Email.ToLower().Contains(searchEmail));
-            }
-            if (!string.IsNullOrWhiteSpace(filter.SearchPhone))
-            {
-                var searchPhone = filter.SearchPhone;
-                query = query.Where(p => p.Phone != null && p.Phone.Contains(searchPhone));
-            }
-            if (!string.IsNullOrWhiteSpace(filter.Country))
-            {
-                query = query.Where(p => p.Country == filter.Country);
-            }
-            if (!string.IsNullOrWhiteSpace(filter.City))
-            {
-                query = query.Where(p => p.City == filter.City);
-            }
-            if (filter.CreatedFrom.HasValue)
-            {
-                query = query.Where(p => p.CreatedAt >= filter.CreatedFrom.Value);
-            }
-            if (filter.CreatedTo.HasValue)
-            {
-                var toDate = filter.CreatedTo.Value.AddDays(1);
-                query = query.Where(p => p.CreatedAt < toDate);
-            }
-
-            // Get data (no pagination)
-            var players = await query
-                .Include(p => p.TournamentPlayers)
+                // Chỉ Include khi user thực sự cần xuất lịch sử
+                players = await query
+                    .Include(p => p.TournamentPlayers)
                     .ThenInclude(tp => tp.Tournament)
-                .ToListAsync(ct);
-
-            // Determine format - we only support CSV without external deps
-            var isCsv = string.IsNullOrWhiteSpace(format) || format.Equals("csv", StringComparison.OrdinalIgnoreCase);
-
-            if (!isCsv)
+                    .OrderByDescending(p => p.CreatedAt) // Nên sort để file đẹp
+                    .ToListAsync(ct);
+            }
+            else
             {
-                // Fallback: if Excel requested, return CSV with proper filename indicating xlsx unsupported
-                format = "csv";
+                // Nếu không cần lịch sử, chỉ lấy thông tin cơ bản (Query nhẹ hơn rất nhiều)
+                players = await query
+                    .OrderByDescending(p => p.CreatedAt)
+                    .ToListAsync(ct);
             }
 
+            // 4. Xử lý CSV
             var sb = new System.Text.StringBuilder();
-
             if (!includeTournamentHistory)
             {
-                // Header
                 sb.AppendLine("PlayerId,FullName,Nickname,Email,Phone,Country,City,SkillLevel,CreatedAt");
-
                 foreach (var p in players)
                 {
                     sb.AppendLine(
-                        $"\"{p.Id}\"," +
-                        $"\"{p.FullName}\"," +
-                        $"\"{p.Nickname}\"," +
-                        $"\"{p.Email}\"," +
-                        $"\"{p.Phone}\"," +
-                        $"\"{p.Country}\"," +
-                        $"\"{p.City}\"," +
-                        $"{(p.SkillLevel?.ToString() ?? string.Empty)}," +
+                        $"{p.Id}," +
+                        $"{EscapeCsv(p.FullName)}," +
+                        $"{EscapeCsv(p.Nickname)}," +
+                        $"{EscapeCsv(p.Email)}," +
+                        $"{EscapeCsv(p.Phone)}," +
+                        $"{EscapeCsv(p.Country)}," +
+                        $"{EscapeCsv(p.City)}," +
+                        $"{(p.SkillLevel?.ToString() ?? "")}," +
                         $"{p.CreatedAt:yyyy-MM-dd HH:mm:ss}"
                     );
                 }
             }
             else
             {
-                // Header with tournament columns (flattened, pipe-separated)
-                sb.AppendLine("PlayerId,FullName,Email,Phone,Country,City,SkillLevel,CreatedAt,TournamentsCount,LastTournamentDate,TournamentHistory");
-
+                sb.AppendLine(
+                    "PlayerId,FullName,Email,Phone,Country,City,SkillLevel,CreatedAt,TournamentsCount,LastTournamentDate,TournamentHistory");
                 foreach (var p in players)
                 {
                     var tournaments = p.TournamentPlayers
                         .Where(tp => tp.Tournament != null)
                         .OrderByDescending(tp => tp.Tournament!.StartUtc)
-                        .Select(tp => new {
+                        .Select(tp => new
+                        {
                             tp.TournamentId,
                             Name = tp.Tournament!.Name,
                             Date = tp.Tournament!.StartUtc
                         })
                         .ToList();
+                    // Format history: "ID:Name:Date | ID:Name:Date"
+                    var historyString = string.Join(" | ",
+                        tournaments.Select(t => $"{t.TournamentId}:{t.Name}:{t.Date:yyyy-MM-dd}"));
 
-                    var history = string.Join(" | ", tournaments.Select(t => $"{t.TournamentId}:{t.Name}:{t.Date:yyyy-MM-dd}"));
                     var lastDate = tournaments.FirstOrDefault()?.Date;
-
                     sb.AppendLine(
-                        $"\"{p.Id}\"," +
-                        $"\"{p.FullName}\"," +
-                        $"\"{p.Email}\"," +
-                        $"\"{p.Phone}\"," +
-                        $"\"{p.Country}\"," +
-                        $"\"{p.City}\"," +
-                        $"{(p.SkillLevel?.ToString() ?? string.Empty)}," +
+                        $"{p.Id}," +
+                        $"{EscapeCsv(p.FullName)}," +
+                        $"{EscapeCsv(p.Email)}," +
+                        $"{EscapeCsv(p.Phone)}," +
+                        $"{EscapeCsv(p.Country)}," +
+                        $"{EscapeCsv(p.City)}," +
+                        $"{(p.SkillLevel?.ToString() ?? "")}," +
                         $"{p.CreatedAt:yyyy-MM-dd HH:mm:ss}," +
                         $"{tournaments.Count}," +
-                        $"{(lastDate.HasValue ? lastDate.Value.ToString("yyyy-MM-dd") : string.Empty)}," +
-                        $"\"{history}\""
+                        $"{(lastDate.HasValue ? lastDate.Value.ToString("yyyy-MM-dd") : "")}," +
+                        $"{EscapeCsv(historyString)}" // Escape cả history string vì nó có thể chứa ký tự lạ
                     );
                 }
             }
 
             var fileName = includeTournamentHistory
-                ? $"players_export_with_tournaments_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv"
-                : $"players_export_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv";
-
-            var export = new
+                ? $"players_history_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv"
+                : $"players_list_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv";
+            // Trả về object chứa content để Controller chuyển thành File
+            var exportResult = new FileExportDto
             {
-                fileName,
-                contentType = "text/csv",
-                content = sb.ToString(),
-                totalRecords = players.Count,
-                exportedAt = DateTime.UtcNow
+                FileName = fileName,
+                ContentType = "text/csv",
+                Content = sb.ToString()
             };
 
-            return Response.Ok(export);
+            return Response.Ok(exportResult);
         }
         catch (Exception ex)
         {
             return Response.Error($"Error exporting players: {ex.Message}");
         }
+    }
+
+    public async Task<Response> MergePlayersAsync(MergePlayerRequestDto request, CancellationToken ct = default)
+    {
+        if (request.SourcePlayerIds == null || !request.SourcePlayerIds.Any())
+            return Response.Error("No source players provided.");
+        if (request.SourcePlayerIds.Contains(request.TargetPlayerId))
+            return Response.Error("Target player cannot be in the source list.");
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            // 2. Lấy hồ sơ Gốc (Target)
+            var targetPlayer = await _db.Players
+                .Include(p => p.User)
+                .FirstOrDefaultAsync(p => p.Id == request.TargetPlayerId, ct);
+
+            if (targetPlayer == null)
+                return Response.Error($"Target player (ID: {request.TargetPlayerId}) not found.");
+
+            // 3. Lấy danh sách hồ sơ Rác (Source)
+            var sourcePlayers = await _db.Players
+                .Where(p => request.SourcePlayerIds.Contains(p.Id))
+                .ToListAsync(ct);
+
+            if (sourcePlayers.Count != request.SourcePlayerIds.Count)
+                return Response.Error("One or more source players not found.");
+
+            // 4. LOGIC GỘP (QUAN TRỌNG)
+
+            // A. Chuyển Lịch Sử Thi Đấu (Tournament History)
+            // Tìm tất cả lần tham gia giải của các ông Source
+            var history = await _db.TournamentPlayers
+                .Where(tp => request.SourcePlayerIds.Contains(tp.PlayerId ?? 0))
+                .ToListAsync(ct);
+            foreach (var record in history)
+            {
+                // Gán lại ID sang ông Target
+                record.PlayerId = targetPlayer.Id;
+            }
+
+            // B. Xử lý Tài khoản liên kết (User Link Safety)
+            // Nếu Target chưa có User, mà một trong các Source lại có User -> Chuyển User sang Target
+            // Để tránh trường hợp User bị mất hồ sơ sau khi gộp.
+            if (targetPlayer.UserId == null)
+            {
+                var sourceWithUser = sourcePlayers.FirstOrDefault(p => p.UserId != null);
+                if (sourceWithUser != null)
+                {
+                    targetPlayer.UserId = sourceWithUser.UserId;
+                    // Clear bên source để tránh lỗi unique (nếu có constraint)
+                    sourceWithUser.UserId = null;
+                }
+            }
+            else
+            {
+                // Nếu Target đã có User, mà Source cũng có User khác -> CẢNH BÁO hoặc CHẶN
+                // Ở đây ta chọn cách an toàn: Chặn gộp nếu xung đột 2 User khác nhau
+                if (sourcePlayers.Any(p => p.UserId != null && p.UserId != targetPlayer.UserId))
+                {
+                    await transaction.RollbackAsync(ct);
+                    return Response.Error(
+                        "Cannot merge: One of the source players belongs to a different User account.");
+                }
+            }
+
+            _db.Players.RemoveRange(sourcePlayers);
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            return Response.Ok(new
+            {
+                Message =
+                    $"Successfully merged {sourcePlayers.Count} players into '{targetPlayer.FullName}' (ID: {targetPlayer.Id})",
+                MovedRecords = history.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            await transaction.RollbackAsync(ct);
+            return Response.Error($"Merge failed: {ex.Message}");
+        }
+    }
+
+    private IQueryable<Player> ApplyPlayerFilters(IQueryable<Player> query, PlayerFilterDto filter)
+    {
+        // 1. Search Tổng hợp (Tên, Email, SĐT, Nickname)
+        if (!string.IsNullOrWhiteSpace(filter.SearchName))
+        {
+            var term = filter.SearchName.ToLower().Trim();
+            query = query.Where(p =>
+                p.FullName.ToLower().Contains(term) ||
+                (p.Email != null && p.Email.ToLower().Contains(term)) ||
+                (p.Phone != null && p.Phone.Contains(term)) ||
+                (p.Nickname != null && p.Nickname.ToLower().Contains(term))
+            );
+        }
+
+        // 2. Search theo tên Giải đấu (Dùng Any tối ưu)
+        if (!string.IsNullOrWhiteSpace(filter.SearchTournament))
+        {
+            var tourTerm = filter.SearchTournament.ToLower().Trim();
+            query = query.Where(p => p.TournamentPlayers.Any(tp =>
+                tp.Tournament.Name.ToLower().Contains(tourTerm)));
+        }
+
+        // 3. Các bộ lọc thuộc tính chính xác
+        if (!string.IsNullOrWhiteSpace(filter.Country))
+            query = query.Where(p => p.Country == filter.Country);
+
+        if (!string.IsNullOrWhiteSpace(filter.City))
+            query = query.Where(p => p.City == filter.City);
+
+        // 4. Lọc theo khoảng Skill Level
+        if (filter.MinSkillLevel.HasValue)
+            query = query.Where(p => p.SkillLevel >= filter.MinSkillLevel.Value);
+
+        if (filter.MaxSkillLevel.HasValue)
+            query = query.Where(p => p.SkillLevel <= filter.MaxSkillLevel.Value);
+
+        // 5. Lọc theo ngày tạo
+        if (filter.CreatedFrom.HasValue)
+            query = query.Where(p => p.CreatedAt >= filter.CreatedFrom.Value);
+
+        if (filter.CreatedTo.HasValue)
+        {
+            // Cộng thêm 1 ngày để lấy trọn vẹn ngày kết thúc
+            var toDate = filter.CreatedTo.Value.AddDays(1);
+            query = query.Where(p => p.CreatedAt < toDate);
+        }
+
+        // 6. Các bộ lọc chất lượng dữ liệu (Data Quality Flags)
+        if (filter.HasEmail.HasValue)
+        {
+            query = query.Where(p => filter.HasEmail.Value
+                ? (p.Email != null && p.Email != "")
+                : (p.Email == null || p.Email == ""));
+        }
+
+        if (filter.HasPhone.HasValue)
+        {
+            query = query.Where(p => filter.HasPhone.Value
+                ? (p.Phone != null && p.Phone != "")
+                : (p.Phone == null || p.Phone == ""));
+        }
+
+        if (filter.HasSkillLevel.HasValue)
+        {
+            query = query.Where(p => filter.HasSkillLevel.Value
+                ? p.SkillLevel != null
+                : p.SkillLevel == null);
+        }
+
+        return query;
+    }
+
+    private string EscapeCsv(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        if (value.Contains("\""))
+        {
+            value = value.Replace("\"", "\"\"");
+        }
+
+        return $"\"{value}\"";
     }
 }

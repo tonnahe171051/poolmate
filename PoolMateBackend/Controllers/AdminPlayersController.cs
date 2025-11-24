@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using PoolMate.Api.Common;
 using PoolMate.Api.Dtos.Admin.Player;
 using PoolMate.Api.Services;
+using PoolMate.Api.Dtos.Response;
+using PoolMate.Api.Dtos.Admin.Player;
 
 namespace PoolMate.Api.Controllers;
 
@@ -17,101 +19,161 @@ public class AdminPlayersController : ControllerBase
     {
         _service = service;
     }
-    
-    /// Get danh sách Players với filter, search, sort và pagination
+
     [HttpGet]
-    public async Task<ActionResult<PagingList<PlayerListDto>>> GetPlayers(
+    [ProducesResponseType(typeof(ApiResponse<PagingList<PlayerListDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PagingList<PlayerListDto>>>> GetPlayers(
         [FromQuery] PlayerFilterDto filter,
         CancellationToken ct)
     {
-        var result = await _service.GetPlayersAsync(filter, ct);
-        return Ok(result);
+        try
+        {
+            var result = await _service.GetPlayersAsync(filter, ct);
+            return Ok(ApiResponse<PagingList<PlayerListDto>>.Ok(result));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<PagingList<PlayerListDto>>.Fail(500, "Internal server error"));
+        }
     }
 
 
-    /// Get thống kê tổng quan về Players
     [HttpGet("statistics")]
-    public async Task<ActionResult<PlayerStatisticsDto>> GetPlayerStatistics(
+    [ProducesResponseType(typeof(ApiResponse<PlayerStatisticsDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PlayerStatisticsDto>>> GetPlayerStatistics(
         CancellationToken ct)
     {
-        var result = await _service.GetPlayerStatisticsAsync(ct);
-        return Ok(result);
+        try
+        {
+            var result = await _service.GetPlayerStatisticsAsync(ct);
+            return Ok(ApiResponse<PlayerStatisticsDto>.Ok(result));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<PlayerStatisticsDto>.Fail(500, "Internal server error"));
+        }
     }
 
 
-    /// Get chi tiết Player theo ID
     [HttpGet("{playerId}")]
-    public async Task<ActionResult<PlayerDetailDto>> GetPlayerDetail(
+    [ProducesResponseType(typeof(ApiResponse<PlayerDetailDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PlayerDetailDto>>> GetPlayerDetail(
         int playerId,
         CancellationToken ct)
     {
-        var result = await _service.GetPlayerDetailAsync(playerId, ct);
-        if (result == null)
-            return NotFound(new { message = "Player not found." });
+        try
+        {
+            var result = await _service.GetPlayerDetailAsync(playerId, ct);
+            if (result == null)
+            {
+                return NotFound(ApiResponse<PlayerDetailDto>.Fail(404, "Player not found."));
+            }
 
-        return Ok(result);
+            return Ok(ApiResponse<PlayerDetailDto>.Ok(result));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<PlayerDetailDto>.Fail(500, "Internal server error"));
+        }
     }
 
-
-    /// GET: api/admin/players/data-quality
-    /// Tổng hợp báo cáo chất lượng dữ liệu Players
 
     [HttpGet("data-quality")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetDataQualityReport(CancellationToken ct)
+    [ProducesResponseType(typeof(ApiResponse<DataQualityReportDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<DataQualityReportDto>>> GetDataQualityReport(
+        CancellationToken ct)
     {
-        var report = await _service.GetDataQualityReportAsync(ct);
-        return Ok(report);
+        try
+        {
+            var report = await _service.GetDataQualityReportAsync(ct);
+            return Ok(ApiResponse<DataQualityReportDto>.Ok(report));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<DataQualityReportDto>.Fail(500, "Internal server error"));
+        }
     }
 
-
-    /// GET: api/admin/players/issues/{issueType}
-    /// Lấy danh sách players theo loại issue
 
     [HttpGet("issues/{issueType}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetPlayersWithIssues(string issueType, CancellationToken ct)
+    [ProducesResponseType(typeof(ApiResponse<PlayersWithIssuesDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PlayersWithIssuesDto>>> GetPlayersWithIssues(
+        string issueType,
+        [FromQuery] int pageIndex = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
     {
-        var result = await _service.GetPlayersWithIssuesAsync(issueType, ct);
-        return Ok(result);
+        try
+        {
+            if (pageIndex < 1) pageIndex = 1;
+            if (pageSize < 1 || pageSize > 100) pageSize = 20;
+            var result = await _service.GetPlayersWithIssuesAsync(issueType, pageIndex, pageSize, ct);
+            return Ok(ApiResponse<PlayersWithIssuesDto>.Ok(result));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<PlayersWithIssuesDto>.Fail(500, "Internal server error"));
+        }
     }
 
-
-    /// POST: api/admin/players/validate
-    /// Validate dữ liệu của 1 player (email/phone/skillLevel)
-    [HttpPost("validate")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public Task<ValidationResultDto> ValidatePlayer([FromBody] ValidatePlayerDto request)
-    {
-        return _service.ValidatePlayerDataAsync(request);
-    }
-
-
-    /// GET: api/admin/players/export
-    /// Export danh sách players ra CSV/Excel (CSV supported). Hỗ trợ filter như API list players
+    
+    
     [HttpGet("export")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> ExportPlayers(
+    [Produces("text/csv")] 
+    [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> ExportPlayers( 
         [FromQuery] PlayerFilterDto filter,
         [FromQuery] bool includeTournamentHistory = false,
         [FromQuery] string format = "csv",
         CancellationToken ct = default)
     {
-        var response = await _service.ExportPlayersAsync(filter, includeTournamentHistory, format, ct);
-        if (!response.Success)
+        try
         {
-            return BadRequest(new { message = response.Message });
+            var response = await _service.ExportPlayersAsync(filter, includeTournamentHistory, format, ct);
+            if (!response.Success)
+            {
+                return BadRequest(ApiResponse<object>.Fail(400, response.Message));
+            }
+            if (response.Data is not FileExportDto data)
+            {
+                return StatusCode(500, ApiResponse<object>.Fail(500, "Export data format mismatch"));
+            }
+            var fileBytes = System.Text.Encoding.UTF8.GetBytes(data.Content);
+            return File(fileBytes, data.ContentType, data.FileName);
         }
-
-        var data = response.Data as dynamic;
-        if (data == null)
+        catch (Exception ex)
         {
-            return BadRequest(new { message = "Export failed" });
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error during export"));
         }
-
-        var content = System.Text.Encoding.UTF8.GetBytes(data.content.ToString());
-        var contentType = data.contentType?.ToString() ?? "text/csv";
-        var fileName = data.fileName?.ToString() ?? $"players_export_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv";
-        return File(content, contentType, fileName);
+    }
+    
+    
+    [HttpPost("merge")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> MergePlayers([FromBody] MergePlayerRequestDto request, CancellationToken ct)
+    {
+        try
+        {
+            var result = await _service.MergePlayersAsync(request, ct);
+            if (!result.Success)
+            {
+                return BadRequest(ApiResponse<object>.Fail(400, result.Message));
+            }
+            return Ok(ApiResponse<object>.Ok(result.Data));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
     }
 }

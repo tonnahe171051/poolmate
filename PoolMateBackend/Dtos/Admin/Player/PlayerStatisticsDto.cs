@@ -4,6 +4,8 @@ public class PlayerStatisticsDto
 {
     // Overview Statistics
     public int TotalPlayers { get; set; }
+    public int ClaimedPlayers { get; set; }
+    public int UnclaimedPlayers { get; set; }
     
     // Recent Activity
     public int PlayersCreatedLast30Days { get; set; }

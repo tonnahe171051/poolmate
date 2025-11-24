@@ -1,12 +1,7 @@
 namespace PoolMate.Api.Dtos.Admin.Player;
 
-/// <summary>
-/// DTO cho chi tiết Player (detail view)
-/// Bao gồm thông tin đầy đủ về player và các relationships
-/// </summary>
 public class PlayerDetailDto
 {
-    // Basic Info
     public int Id { get; set; }
     public string FullName { get; set; } = string.Empty;
     public string? Nickname { get; set; }
@@ -16,18 +11,15 @@ public class PlayerDetailDto
     public string? City { get; set; }
     public int? SkillLevel { get; set; }
     public DateTime CreatedAt { get; set; }
-    
-    // Tournament Statistics
+    public string? LinkedUserId { get; set; }
+    public string? LinkedUserEmail { get; set; }
+    public string? LinkedUserAvatar { get; set; }
+    public List<string> DataIssues { get; set; } = new();
     public TournamentStatsDto TournamentStats { get; set; } = new();
-    
-    // Recent Tournaments (top 10 gần nhất)
     public List<PlayerTournamentHistoryDto> RecentTournaments { get; set; } = new();
 }
 
 
-/// <summary>
-/// Thống kê tournament của Player
-/// </summary>
 public class TournamentStatsDto
 {
     public int TotalTournaments { get; set; }
@@ -37,9 +29,6 @@ public class TournamentStatsDto
     public DateTime? LastTournamentDate { get; set; }
 }
 
-/// <summary>
-/// Lịch sử tham gia tournament của Player
-/// </summary>
 public class PlayerTournamentHistoryDto
 {
     public int TournamentId { get; set; }

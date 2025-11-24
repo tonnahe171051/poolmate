@@ -1,8 +1,5 @@
 namespace PoolMate.Api.Dtos.Admin.Player;
 
-/// <summary>
-/// DTO cho danh sách players (list view)
-/// </summary>
 public class PlayerListDto
 {
     public int Id { get; set; }
