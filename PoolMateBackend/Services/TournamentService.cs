@@ -97,7 +97,6 @@ public class TournamentService : ITournamentService
                 throw new InvalidOperationException("AdvanceToStage2Count must be a power of 2 (4,8,16,...)");
         }
 
-        // ✅ LOGIC MAPPING THEO IsMultiStage
         BracketType bracketType;
         BracketOrdering bracketOrdering;
         BracketOrdering stage2Ordering;
@@ -120,6 +119,7 @@ public class TournamentService : ITournamentService
         var t = new Tournament
         {
             Name = m.Name.Trim(),
+            Description = m.Description, 
             StartUtc = m.StartUtc,
             EndUtc = m.EndUtc,
             VenueId = m.VenueId,
@@ -142,13 +142,13 @@ public class TournamentService : ITournamentService
             Rule = m.Rule ?? Rule.WNT,
             BreakFormat = m.BreakFormat ?? BreakFormat.WinnerBreak,
 
-            // ✅ MULTI-STAGE SETTINGS
+            // MULTI-STAGE SETTINGS
             IsMultiStage = isMulti,
             AdvanceToStage2Count = isMulti ? m.AdvanceToStage2Count : null,
             Stage1Ordering = bracketOrdering, // Sync with BracketOrdering
             Stage2Ordering = stage2Ordering,
 
-            // ✅ BRACKET SETTINGS
+            // BRACKET SETTINGS
             BracketType = bracketType,
             BracketOrdering = bracketOrdering,
             WinnersRaceTo = m.WinnersRaceTo,

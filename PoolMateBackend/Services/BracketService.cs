@@ -412,15 +412,15 @@ namespace PoolMate.Api.Services
                     TpId = match.Player1Tp.Id,
                     Name = match.Player1Tp.DisplayName,
                     Seed = match.Player1Tp.Seed,
-                    Country = match.Player1Tp.Country, 
-                    FargoRating = match.Player1Tp.SkillLevel 
+                    Country = match.Player1Tp.Country,
+                    FargoRating = match.Player1Tp.SkillLevel
                 } : null,
                 Player2 = match.Player2Tp != null ? new PlayerDto
                 {
                     TpId = match.Player2Tp.Id,
                     Name = match.Player2Tp.DisplayName,
                     Seed = match.Player2Tp.Seed,
-                    Country = match.Player2Tp.Country, 
+                    Country = match.Player2Tp.Country,
                     FargoRating = match.Player2Tp.SkillLevel
                 } : null,
                 Winner = match.WinnerTp != null ? new PlayerDto
@@ -428,8 +428,8 @@ namespace PoolMate.Api.Services
                     TpId = match.WinnerTp.Id,
                     Name = match.WinnerTp.DisplayName,
                     Seed = match.WinnerTp.Seed,
-                    Country = match.WinnerTp.Country, 
-                    FargoRating = match.WinnerTp.SkillLevel 
+                    Country = match.WinnerTp.Country,
+                    FargoRating = match.WinnerTp.SkillLevel
                 } : null,
 
                 Player1SourceType = match.Player1SourceType,
@@ -600,7 +600,14 @@ namespace PoolMate.Api.Services
                 await ProcessAutoAdvancements(match.TournamentId, ct);
 
             var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            return MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
+            var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
+
+            // Broadcast realtime updates
+            // bracketChanged = true if match completed OR table assignment changed
+            var tableAssignmentChanged = previousTableId != match.TableId;
+            await PublishRealtimeUpdates(match, dto, bracketChanged: match.Status == MatchStatus.Completed || tableAssignmentChanged, ct);
+
+            return dto;
         }
 
         public async Task<MatchDto> CorrectMatchResultAsync(int matchId, CorrectMatchResultRequest request, CancellationToken ct)
@@ -657,7 +664,12 @@ namespace PoolMate.Api.Services
             await ProcessAutoAdvancements(match.TournamentId, ct);
 
             var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            return MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
+            var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
+
+            // Broadcast realtime updates
+            await PublishRealtimeUpdates(match, dto, bracketChanged: true, ct);
+
+            return dto;
         }
 
         public async Task<StageCompletionResultDto> CompleteStageAsync(int tournamentId, int stageNo, CompleteStageRequest request, CancellationToken ct)
@@ -947,7 +959,8 @@ namespace PoolMate.Api.Services
                 var stageEval = await EvaluateStageAsync(match.StageId, ct);
                 var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
 
-                await PublishRealtimeUpdates(match, dto, bracketChanged: false, ct);
+                // Broadcast bracket update on score changes to keep bracket view in sync
+                await PublishRealtimeUpdates(match, dto, bracketChanged: true, ct);
 
                 return new MatchScoreUpdateResponse
                 {
@@ -2488,7 +2501,7 @@ namespace PoolMate.Api.Services
                     TpId = tp.Id,
                     Name = tp.DisplayName,
                     Seed = tp.Seed,
-                    Country = tp.Country, 
+                    Country = tp.Country,
                     FargoRating = tp.SkillLevel
                 }, ct);
 

@@ -1,4 +1,4 @@
-﻿using CloudinaryDotNet;
+using CloudinaryDotNet;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -122,8 +122,23 @@ builder.Services.AddAuthentication(o =>
         ValidateLifetime = true,
         ClockSkew = TimeSpan.Zero
     };
+    
     o.Events = new JwtBearerEvents
     {
+        // Allow token from query string for SignalR
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.HttpContext.Request.Path;
+
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+            {
+                context.Token = accessToken;
+            }
+
+            return Task.CompletedTask;
+        },
+        
         //  401 Unauthorized 
         OnChallenge = context =>
         {
