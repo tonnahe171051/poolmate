@@ -8,6 +8,9 @@ public class CreateTournamentModel
     [Required, MaxLength(200)]
     public string Name { get; set; } = default!;
 
+    [MaxLength(2000)] 
+    public string? Description { get; set; }
+
     public DateTime StartUtc { get; set; } = DateTime.UtcNow;
     public DateTime? EndUtc { get; set; }
 
