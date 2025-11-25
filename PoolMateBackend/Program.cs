@@ -15,6 +15,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using PoolMate.Api.Dtos.Response;
 using System.Text.Json;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,10 +30,10 @@ builder.Services.AddCors(options =>
     options.AddPolicy("ReactPolicy", policy =>
     {
         policy.WithOrigins(
-                "http://localhost:3000",      // React dev server
-                "http://localhost:3001",      // Alternative React port
-                "https://localhost:3000",     // HTTPS React dev
-                "https://localhost:3001"      // HTTPS alternative
+                "http://localhost:3000", // React dev server
+                "http://localhost:3001", // Alternative React port
+                "https://localhost:3000", // HTTPS React dev
+                "https://localhost:3001" // HTTPS alternative
             )
             .AllowAnyHeader()
             .AllowAnyMethod()
@@ -62,6 +63,8 @@ builder.Services.AddSignalR();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "PoolMate.Api", Version = "v1" });
+
+    c.CustomSchemaIds(type => type.ToString());
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -95,57 +98,74 @@ builder.Services.AddDbContext<ApplicationDbContext>(opt =>
 
 // Identity 
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(opt =>
-{
-    opt.User.RequireUniqueEmail = true;
-    opt.Password.RequiredLength = 6;
-})
-.AddEntityFrameworkStores<ApplicationDbContext>()
-.AddDefaultTokenProviders();
+    {
+        opt.User.RequireUniqueEmail = true;
+        opt.Password.RequiredLength = 6;
+    })
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddDefaultTokenProviders();
 
 // JWT Bearer
 var jwt = builder.Configuration.GetSection("JWT");
 builder.Services.AddAuthentication(o =>
-{
-    o.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    o.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(o =>
-{
-    o.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidateIssuer = true,
-        ValidIssuer = jwt["ValidIssuer"],
-        ValidateAudience = true,
-        ValidAudience = jwt["ValidAudience"],
-        ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Secret"]!)),
-        ValidateLifetime = true,
-        ClockSkew = TimeSpan.Zero
-    };
-    o.Events = new JwtBearerEvents
+        o.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        o.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(o =>
     {
-        //  401 Unauthorized 
-        OnChallenge = context =>
+        o.TokenValidationParameters = new TokenValidationParameters
         {
-            context.HandleResponse();
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            context.Response.ContentType = "application/json";
-            var response = ApiResponse<object>.Fail(401, "Unauthorized: You are not logged in or token is invalid.");
-            var json = JsonSerializer.Serialize(response);
-            return context.Response.WriteAsync(json);
-        },
-        
-        // 403 Forbidden
-        OnForbidden = context =>
+            ValidateIssuer = true,
+            ValidIssuer = jwt["ValidIssuer"],
+            ValidateAudience = true,
+            ValidAudience = jwt["ValidAudience"],
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Secret"]!)),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero
+        };
+        o.Events = new JwtBearerEvents
         {
-            context.Response.StatusCode = StatusCodes.Status403Forbidden;
-            context.Response.ContentType = "application/json";
-            var response = ApiResponse<object>.Fail(403, "Forbidden: You do not have permission to access this resource.");
-            var json = JsonSerializer.Serialize(response);
-            return context.Response.WriteAsync(json);
-        }
-    };
-});
+            OnTokenValidated = async context =>
+            {
+                var userManager = context.HttpContext.RequestServices
+                    .GetRequiredService<UserManager<ApplicationUser>>();
+                var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (!string.IsNullOrEmpty(userId))
+                {
+                    var user = await userManager.FindByIdAsync(userId);
+                    if (user == null ||
+                        (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow))
+                    {
+                        context.Fail("This account has been deactivated/locked.");
+                    }
+                }
+            },
+            //  401 Unauthorized 
+            OnChallenge = context =>
+            {
+                context.HandleResponse();
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.ContentType = "application/json";
+                var response =
+                    ApiResponse<object>.Fail(401, "Unauthorized: You are not logged in or token is invalid.");
+                var json = JsonSerializer.Serialize(response);
+                return context.Response.WriteAsync(json);
+            },
+
+            // 403 Forbidden
+            OnForbidden = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                context.Response.ContentType = "application/json";
+                var response = ApiResponse<object>.Fail(403,
+                    "Forbidden: You do not have permission to access this resource.");
+                var json = JsonSerializer.Serialize(response);
+                return context.Response.WriteAsync(json);
+            }
+        };
+    });
 
 //Email
 builder.Services.Configure<EmailSettings>(
