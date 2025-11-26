@@ -40,7 +40,7 @@ builder.Services.AddCors(options =>
             .AllowCredentials();
     });
 
-    // Policy for production (thêm domain thật khi deploy)
+    // Policy for production
     options.AddPolicy("ProductionPolicy", policy =>
     {
         policy.WithOrigins("https://your-production-domain.com")
@@ -105,7 +105,7 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(opt =>
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddDefaultTokenProviders();
 
-// JWT Bearer
+// JWT Bearer Configuration
 var jwt = builder.Configuration.GetSection("JWT");
 builder.Services.AddAuthentication(o =>
     {
@@ -125,8 +125,26 @@ builder.Services.AddAuthentication(o =>
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero
         };
+        
         o.Events = new JwtBearerEvents
         {
+            // --- XỬ LÝ TOKEN CHO SIGNALR (Được thêm vào từ Code 1) ---
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+
+                // SignalR gửi token qua query string, cần gán thủ công vào context
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+
+                return Task.CompletedTask;
+            },
+            // ---------------------------------------------------------
+
+            // Kiểm tra user bị khóa (Lockout Check - Tính năng của Code 2)
             OnTokenValidated = async context =>
             {
                 var userManager = context.HttpContext.RequestServices
@@ -142,6 +160,7 @@ builder.Services.AddAuthentication(o =>
                     }
                 }
             },
+
             //  401 Unauthorized 
             OnChallenge = context =>
             {
@@ -193,24 +212,15 @@ builder.Services.AddScoped<ITableTokenService, TableTokenService>();
 
 // App services
 builder.Services.AddScoped<AuthService>();
-
 builder.Services.AddScoped<IPostService, PostService>();
-
 builder.Services.AddScoped<ITournamentService, TournamentService>();
-
 builder.Services.AddScoped<IVenueService, VenueService>();
-
 builder.Services.AddScoped<IAuthService, AuthService>();
-
 builder.Services.AddScoped<IBracketService, BracketService>();
-
 builder.Services.AddScoped<IAdminUserService, AdminUserService>();
-
 builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
-
 builder.Services.AddScoped<IPlayerProfileService, PlayerProfileService>();
-
-builder.Services.AddScoped<IAdminPayoutService, AdminPayoutService>();
+builder.Services.AddScoped<IAdminPayoutService, AdminPayoutService>(); // Service mới của Code 2
 
 // Cloudinary
 builder.Services.AddSingleton(sp =>
