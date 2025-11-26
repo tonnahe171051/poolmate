@@ -220,7 +220,7 @@ builder.Services.AddScoped<IBracketService, BracketService>();
 builder.Services.AddScoped<IAdminUserService, AdminUserService>();
 builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
 builder.Services.AddScoped<IPlayerProfileService, PlayerProfileService>();
-builder.Services.AddScoped<IAdminPayoutService, AdminPayoutService>(); // Service mới của Code 2
+builder.Services.AddScoped<IAdminPayoutService, AdminPayoutService>(); 
 
 // Cloudinary
 builder.Services.AddSingleton(sp =>
@@ -239,8 +239,6 @@ builder.Services.Configure<CloudinaryOptions>(
 builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
 builder.Services.AddScoped<IProfileService, ProfileService>();
 
-// Dashboard Data Seeder (for testing)
-builder.Services.AddScoped<DashboardDataSeeder>();
 
 var app = builder.Build();
 

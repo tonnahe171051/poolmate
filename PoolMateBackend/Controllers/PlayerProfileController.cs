@@ -5,6 +5,7 @@ using PoolMate.Api.Services;
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
+using PoolMate.Api.Common;
 using PoolMate.Api.Models;
 using PoolMate.Api.Dtos.Response;
 
@@ -17,11 +18,14 @@ public class PlayerProfileController : ControllerBase
 {
     private readonly IPlayerProfileService _service;
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly ILogger<PlayerProfileController> _logger;
 
-    public PlayerProfileController(IPlayerProfileService service, UserManager<ApplicationUser> userManager)
+    public PlayerProfileController(IPlayerProfileService service, UserManager<ApplicationUser> userManager,
+        ILogger<PlayerProfileController> logger)
     {
         _service = service;
         _userManager = userManager;
+        _logger = logger;
     }
 
 
@@ -50,12 +54,14 @@ public class PlayerProfileController : ControllerBase
 
             var result = await _service.CreatePlayerProfileAsync(userId, user, ct);
             if (result == null)
-                return BadRequest(ApiResponse<CreatePlayerProfileResponseDto>.Fail(400, "Failed to create player profile"));
-            
+                return BadRequest(
+                    ApiResponse<CreatePlayerProfileResponseDto>.Fail(400, "Failed to create player profile"));
+
             return CreatedAtAction(
                 actionName: nameof(GetMyPlayerProfiles),
                 routeValues: null,
-                value: ApiResponse<CreatePlayerProfileResponseDto>.Created(result, "Player profile created successfully")
+                value: ApiResponse<CreatePlayerProfileResponseDto>.Created(result,
+                    "Player profile created successfully")
             );
         }
         catch (InvalidOperationException ex)
@@ -92,6 +98,43 @@ public class PlayerProfileController : ControllerBase
         catch (Exception e)
         {
             return StatusCode(500, ApiResponse<List<PlayerProfileDetailDto>>.Fail(500, "Internal server error"));
+        }
+    }
+    
+
+    
+    [HttpGet("my-matches")]
+    [ProducesResponseType(typeof(ApiResponse<PagingList<MatchHistoryDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PagingList<MatchHistoryDto>>>> GetMyMatches( 
+        [FromQuery] int pageIndex = 1, 
+        [FromQuery] int pageSize = 20, 
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return Unauthorized(ApiResponse<object>.Fail(401, "User not authenticated"));
+            }
+            var profiles = await _service.GetMyPlayerProfilesAsync(userId, ct);
+            var mainProfile = profiles.FirstOrDefault();
+            if (mainProfile == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(404,
+                    "You don't have a player profile yet. Please create one first."));
+            }
+            var history = await _service.GetMatchHistoryAsync(mainProfile.Id, pageIndex, pageSize, ct);
+            return Ok(ApiResponse<PagingList<MatchHistoryDto>>.Ok(history));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching match history for user {UserId}",
+                User.FindFirstValue(ClaimTypes.NameIdentifier));
+            return StatusCode(500, ApiResponse<PagingList<MatchHistoryDto>>.Fail(500, "Internal server error"));
         }
     }
 }

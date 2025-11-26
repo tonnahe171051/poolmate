@@ -24,4 +24,5 @@ public interface IAdminPlayerService
         CancellationToken ct);
 
     Task<Response> MergePlayersAsync(MergePlayerRequestDto request, CancellationToken ct = default);
+    
 }

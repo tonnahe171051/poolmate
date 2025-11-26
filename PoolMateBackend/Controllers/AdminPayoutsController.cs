@@ -8,8 +8,8 @@ using PoolMate.Api.Common;
 namespace PoolMate.Api.Controllers;
 
 [ApiController]
-[Route("api/admin/payouts")]
-[Authorize(Roles = "Admin")]
+[Route("api/payouts")]
+[Authorize(Roles = "Organizer")]
 public class AdminPayoutsController : ControllerBase
 {
     private readonly IAdminPayoutService _service;
@@ -161,7 +161,7 @@ public class AdminPayoutsController : ControllerBase
         }
     }
 
-    
+
     [HttpPost("simulate")]
     [ProducesResponseType(typeof(ApiResponse<PayoutSimulationResultDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
