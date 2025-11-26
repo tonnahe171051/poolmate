@@ -840,6 +840,10 @@ namespace PoolMate.Api.Services
                 .AsNoTracking()
                 .ToListAsync(ct);
 
+            var countedMatches = matches
+                .Where(ShouldIncludeInSummary)
+                .ToList();
+
             var summary = new TournamentStatusSummaryDto
             {
                 TournamentId = tournament.Id,
@@ -856,21 +860,21 @@ namespace PoolMate.Api.Services
                     summary.Runtime = effectiveEnd - tournament.StartUtc;
             }
 
-            var matchesTotal = matches.Count;
-            var matchesCompleted = matches.Count(m => m.Status == MatchStatus.Completed);
-            var matchesInProgress = matches.Count(m => m.Status == MatchStatus.InProgress);
-            var matchesNotStarted = matches.Count(m => m.Status == MatchStatus.NotStarted && !m.ScheduledUtc.HasValue);
-            var matchesScheduled = matches.Count(m => m.Status == MatchStatus.NotStarted && m.ScheduledUtc.HasValue);
+            var matchesTotal = countedMatches.Count;
+            var matchesCompleted = countedMatches.Count(m => m.Status == MatchStatus.Completed);
+            var matchesInProgress = countedMatches.Count(m => m.Status == MatchStatus.InProgress);
+            var matchesNotStarted = countedMatches.Count(m => m.Status == MatchStatus.NotStarted && !m.ScheduledUtc.HasValue);
+            var matchesScheduled = countedMatches.Count(m => m.Status == MatchStatus.NotStarted && m.ScheduledUtc.HasValue);
 
             summary.Matches.Total = matchesTotal;
             summary.Matches.Completed = matchesCompleted;
             summary.Matches.InProgress = matchesInProgress;
             summary.Matches.NotStarted = matchesNotStarted;
             summary.Matches.Scheduled = matchesScheduled;
-            summary.Matches.WinnersSide = matches.Count(m => m.Bracket == BracketSide.Winners);
-            summary.Matches.LosersSide = matches.Count(m => m.Bracket == BracketSide.Losers);
-            summary.Matches.KnockoutSide = matches.Count(m => m.Bracket == BracketSide.Knockout);
-            summary.Matches.FinalsSide = matches.Count(m => m.Bracket == BracketSide.Finals);
+            summary.Matches.WinnersSide = countedMatches.Count(m => m.Bracket == BracketSide.Winners);
+            summary.Matches.LosersSide = countedMatches.Count(m => m.Bracket == BracketSide.Losers);
+            summary.Matches.KnockoutSide = countedMatches.Count(m => m.Bracket == BracketSide.Knockout);
+            summary.Matches.FinalsSide = countedMatches.Count(m => m.Bracket == BracketSide.Finals);
 
             summary.CompletionPercent = matchesTotal == 0
                 ? 0
@@ -882,7 +886,7 @@ namespace PoolMate.Api.Services
             summary.Tables.InUse = tables.Count(t => t.Status == TableStatus.InUse);
             summary.Tables.Closed = tables.Count(t => t.Status == TableStatus.Closed);
 
-            var activeMatchesWithTables = matches
+            var activeMatchesWithTables = countedMatches
                 .Where(m => m.TableId.HasValue && m.Status != MatchStatus.Completed)
                 .ToList();
 
@@ -900,7 +904,7 @@ namespace PoolMate.Api.Services
             summary.ActivePlayers = playerStats.Count(p => !p.IsEliminated);
             summary.EliminatedPlayers = playerStats.Count - summary.ActivePlayers;
 
-            var placementMatches = matches.Select(ToPlacementMatch).ToList();
+            var placementMatches = countedMatches.Select(ToPlacementMatch).ToList();
             var (championDto, runnerUpDto, additionalPlacements) = ApplyPlacements(placementMatches, statsLookup);
 
             summary.Champion = championDto;
@@ -1571,6 +1575,21 @@ namespace PoolMate.Api.Services
                 throw new InvalidOperationException("Scores do not determine a unique winner.");
 
             return p1Wins ? player1Id : player2Id;
+        }
+
+        private static bool ShouldIncludeInSummary(Match match)
+        {
+            if (match.Stage.Status == StageStatus.Completed && match.Status == MatchStatus.NotStarted)
+            {
+                var hasPlayersAssigned = match.Player1TpId.HasValue || match.Player2TpId.HasValue;
+                var hasProgress = match.ScoreP1.HasValue || match.ScoreP2.HasValue;
+                var hasSchedule = match.ScheduledUtc.HasValue;
+
+                if (!hasPlayersAssigned && !hasProgress && !hasSchedule)
+                    return false;
+            }
+
+            return true;
         }
 
         private sealed record PlacementMatch(
