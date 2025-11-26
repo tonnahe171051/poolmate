@@ -210,6 +210,8 @@ builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
 
 builder.Services.AddScoped<IPlayerProfileService, PlayerProfileService>();
 
+builder.Services.AddScoped<IAdminPayoutService, AdminPayoutService>();
+
 // Cloudinary
 builder.Services.AddSingleton(sp =>
 {
