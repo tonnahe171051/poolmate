@@ -100,17 +100,16 @@ public class PlayerProfileController : ControllerBase
             return StatusCode(500, ApiResponse<List<PlayerProfileDetailDto>>.Fail(500, "Internal server error"));
         }
     }
-    
 
-    
+
     [HttpGet("my-matches")]
     [ProducesResponseType(typeof(ApiResponse<PagingList<MatchHistoryDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
-    public async Task<ActionResult<ApiResponse<PagingList<MatchHistoryDto>>>> GetMyMatches( 
-        [FromQuery] int pageIndex = 1, 
-        [FromQuery] int pageSize = 20, 
+    public async Task<ActionResult<ApiResponse<PagingList<MatchHistoryDto>>>> GetMyMatches(
+        [FromQuery] int pageIndex = 1,
+        [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
         try
@@ -120,6 +119,7 @@ public class PlayerProfileController : ControllerBase
             {
                 return Unauthorized(ApiResponse<object>.Fail(401, "User not authenticated"));
             }
+
             var profiles = await _service.GetMyPlayerProfilesAsync(userId, ct);
             var mainProfile = profiles.FirstOrDefault();
             if (mainProfile == null)
@@ -127,6 +127,7 @@ public class PlayerProfileController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail(404,
                     "You don't have a player profile yet. Please create one first."));
             }
+
             var history = await _service.GetMatchHistoryAsync(mainProfile.Id, pageIndex, pageSize, ct);
             return Ok(ApiResponse<PagingList<MatchHistoryDto>>.Ok(history));
         }
@@ -135,6 +136,52 @@ public class PlayerProfileController : ControllerBase
             _logger.LogError(ex, "Error fetching match history for user {UserId}",
                 User.FindFirstValue(ClaimTypes.NameIdentifier));
             return StatusCode(500, ApiResponse<PagingList<MatchHistoryDto>>.Fail(500, "Internal server error"));
+        }
+    }
+    
+    [HttpGet("{playerId}/stats")]
+    [ProducesResponseType(typeof(ApiResponse<PlayerStatsDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)] // ✅ Đã thêm
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)] // ✅ Đã thêm
+    public async Task<ActionResult<ApiResponse<PlayerStatsDto>>> GetPlayerStats(
+        int playerId,
+        CancellationToken ct)
+    {
+        try
+        {
+            var stats = await _service.GetPlayerStatsAsync(playerId, ct);
+            return Ok(ApiResponse<PlayerStatsDto>.Ok(stats));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching stats for player {PlayerId}", playerId);
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
+    }
+
+    [HttpGet("my-stats")]
+    [ProducesResponseType(typeof(ApiResponse<PlayerStatsDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<PlayerStatsDto>>> GetMyStats(
+        CancellationToken ct)
+    {
+        try
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(userId))
+                return Unauthorized(ApiResponse<object>.Fail(401, "User not authenticated"));
+            var profiles = await _service.GetMyPlayerProfilesAsync(userId, ct);
+            var mainProfile = profiles.FirstOrDefault();
+
+            if (mainProfile == null)
+                return NotFound(ApiResponse<object>.Fail(404, "You don't have a player profile yet."));
+            var stats = await _service.GetPlayerStatsAsync(mainProfile.Id, ct);
+            return Ok(ApiResponse<PlayerStatsDto>.Ok(stats));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching stats for user {UserId}",
+                User.FindFirstValue(ClaimTypes.NameIdentifier));
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
         }
     }
 }

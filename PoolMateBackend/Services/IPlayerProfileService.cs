@@ -16,4 +16,6 @@ public interface IPlayerProfileService
         CancellationToken ct = default);
 
     Task<PagingList<MatchHistoryDto>> GetMatchHistoryAsync(int playerId, int pageIndex = 1, int pageSize = 20, CancellationToken ct = default);
+    
+    Task<PlayerStatsDto> GetPlayerStatsAsync(int playerId, CancellationToken ct = default);
 }

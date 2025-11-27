@@ -7,12 +7,17 @@ public class MatchHistoryDto
     public string TournamentName { get; set; } = string.Empty;
     public DateTime TournamentDate { get; set; }
     public string GameType { get; set; } = string.Empty; 
+    public string? VenueName { get; set; } 
     public string StageType { get; set; } = string.Empty; 
     public string RoundName { get; set; } = string.Empty; 
     public string BracketSide { get; set; } = string.Empty; 
+
     public string OpponentName { get; set; } = string.Empty;
+    
+    public int? OpponentId { get; set; } 
     public string Result { get; set; } = string.Empty; 
-    public string Score { get; set; } = string.Empty; 
-    public int RaceTo { get; set; }
+    public string Score { get; set; } = string.Empty;  
+    public int RaceTo { get; set; } 
+    
     public DateTime? MatchDate { get; set; }
 }
