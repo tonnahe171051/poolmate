@@ -112,6 +112,8 @@ namespace PoolMate.Api.Services
             };
         }
 
+        
+
         public async Task CreateAsync(int tournamentId, CreateBracketRequest? request, CancellationToken ct)
         {
             try
@@ -163,6 +165,52 @@ namespace PoolMate.Api.Services
 
                     slots = MakeSlots(players, finalSize, stage1Ordering);
                 }
+
+                // After slots are prepared (manual or automatic), validate and possibly
+                // shrink the bracket to the optimal size based on the number of assigned players.
+                var assignedCount = slots.Count(s => s is not null && s.TpId != default);
+
+                if (assignedCount < 2)
+                    throw new PoolMate.Api.Common.ValidationException("At least two players are required to create a bracket.");
+
+                // If this is a multi-stage tournament, manual creations must still satisfy
+                // the configured minimum advance count based on assigned players.
+                if (t.IsMultiStage && t.AdvanceToStage2Count.HasValue)
+                {
+                    var requiredPlayers = Math.Max(t.AdvanceToStage2Count.Value + 1, 5);
+                    if (assignedCount < requiredPlayers)
+                        throw new PoolMate.Api.Common.ValidationException($"Multi-stage bracket requires at least {requiredPlayers} players assigned in stage 1 for advance count {t.AdvanceToStage2Count.Value}.");
+                }
+
+                // Compute optimal bracket size from the number of players actually assigned
+                // and shrink if necessary (e.g., user left many slots empty in manual assignment).
+                var optimalForAssigned = GetOptimalBracketSize(Math.Max(assignedCount, 2));
+                if (optimalForAssigned < slots.Count)
+                {
+                    // Rebuild slots for the smaller optimal size using only the assigned players
+                    var presentPlayers = slots.Where(s => s is not null).Select(s => s!).ToList();
+                    slots = MakeSlots(presentPlayers, optimalForAssigned, stage1Ordering);
+                }
+
+                // Finally, reject creation if any first-round match is completely empty
+                // (both slots null). This enforces a "clean" bracket for manual creations.
+                for (int i = 0; i < slots.Count / 2; i++)
+                {
+                    if (slots[2 * i] is null && slots[2 * i + 1] is null)
+                    {
+                        var err = "Bracket contains an empty first-round match. Please correct the bracket before creating.";
+                        throw new PoolMate.Api.Common.ValidationException(err, new[] { err });
+                    }
+                }
+
+                if (t.IsMultiStage && t.AdvanceToStage2Count.HasValue)
+                {
+                    var requiredPlayers = Math.Max(t.AdvanceToStage2Count.Value + 1, 5);
+                    var assignedPlayers = slots.Count(s => s is not null && s.TpId != default);
+                    if (assignedPlayers < requiredPlayers)
+                        throw new InvalidOperationException($"Multi-stage bracket requires at least {requiredPlayers} players assigned in stage 1 for advance count {t.AdvanceToStage2Count.Value}.");
+                }
+
                 // Create Stage 1
                 var s1 = new TournamentStage
                 {
@@ -554,6 +602,9 @@ namespace PoolMate.Api.Services
                 winnerTpId = InferWinnerFromScores(match);
             }
 
+            if (winnerTpId.HasValue && (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue))
+                throw new InvalidOperationException("Both players must be assigned before recording a winner.");
+
             var hasProgress = HasProgress(match.ScoreP1, match.ScoreP2, match.TableId);
 
             if ((winnerTpId.HasValue || hasProgress) &&
@@ -840,9 +891,7 @@ namespace PoolMate.Api.Services
                 .AsNoTracking()
                 .ToListAsync(ct);
 
-            var countedMatches = matches
-                .Where(ShouldIncludeInSummary)
-                .ToList();
+            var countedMatches = matches.ToList();
 
             var summary = new TournamentStatusSummaryDto
             {
@@ -932,6 +981,10 @@ namespace PoolMate.Api.Services
                 ValidateScoringAccess(match, actor, ensureNotCompleted: true);
                 ApplyRowVersion(match, request.RowVersion);
                 ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
+
+                var intendsToUpdateScoresOrRace = request.ScoreP1.HasValue || request.ScoreP2.HasValue || request.RaceTo.HasValue;
+                if (intendsToUpdateScoresOrRace && (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue))
+                    throw new InvalidOperationException("Both players must be assigned before updating scores or race-to.");
 
                 if (request.RaceTo.HasValue)
                     match.RaceTo = request.RaceTo;
@@ -1917,60 +1970,123 @@ namespace PoolMate.Api.Services
         {
             var slots = Enumerable.Repeat<PlayerSeed?>(null, size).ToList();
             if (players is null || players.Count == 0) return slots;
-
+            // If ordering is Random, distribute players round-robin across matches so
+            // each match gets at most one player before filling second slots. This
+            // maximizes number of player-vs-BYE matches for sparse fields.
             if (ordering == BracketOrdering.Random)
             {
-                // Random
-                var shuffled = players.ToList();
-                FisherYates(shuffled);
+                var list = players.ToList();
+                FisherYates(list);
+                int matchCount = size / 2;
+                int i = 0;
+                foreach (var p in list)
+                {
+                    var matchIndex = i % matchCount;
+                    var pos1 = matchIndex * 2;
+                    var pos2 = pos1 + 1;
+                    if (slots[pos1] is null)
+                        slots[pos1] = p;
+                    else
+                        slots[pos2] = p;
+                    i++;
+                }
 
-                for (int i = 0; i < Math.Min(size, shuffled.Count); i++)
-                    slots[i] = shuffled[i];
                 return slots;
             }
 
+            // For seeded ordering, place players into seed-position indices so BYEs are distributed evenly.
             var seeded = players.Where(p => p.Seed.HasValue).OrderBy(p => p.Seed!.Value).ToList();
             var unseeded = players.Where(p => !p.Seed.HasValue).ToList();
 
+            // Shuffle unseeded players so their positions are random among remaining slots
             FisherYates(unseeded);
 
-            if (seeded.Count >= 2)
+            var positions = BuildSeedPositions(size);
+
+            int idx = 0;
+            // Place seeded players in order into the seed positions
+            for (; idx < seeded.Count && idx < positions.Length; idx++)
             {
-                //Set highest and lowest seeds in first two positions
-                slots[0] = seeded[0];
-                slots[1] = seeded[^1];
+                slots[positions[idx]] = seeded[idx];
+            }
 
-                int nextPosition = 2;
-                for (int i = 1; i < seeded.Count - 1 && nextPosition < size; i++)
+            // Fill remaining positions with unseeded players
+            int u = 0;
+            // Distribute remaining unseeded players across matches so BYEs are spread
+            var remaining = positions.Skip(idx).ToList();
+
+            // Build groups per match and compute how many seeded players each group already has.
+            var groupMap = remaining
+                .GroupBy(p => p / 2)
+                .Select(g => new { MatchIndex = g.Key, Positions = g.ToList() })
+                .OrderBy(g => g.MatchIndex)
+                .ToList();
+
+            var groupsWithSeedCount = groupMap
+                .Select(g => new
                 {
-                    while (nextPosition < size && slots[nextPosition] != null)
-                        nextPosition++;
+                    g.MatchIndex,
+                    g.Positions,
+                    SeededCount = g.Positions.Count(pos => slots[pos] is not null)
+                })
+                .ToList();
 
-                    if (nextPosition < size)
+            // Order groups so that groups with fewer seeded players are filled first
+            var fillOrder = groupsWithSeedCount
+                .OrderBy(g => g.SeededCount)
+                .ThenBy(g => g.MatchIndex)
+                .ToList();
+
+            // First pass: place at most one unseeded player per match (group), prioritizing groups with 0 seeded
+            foreach (var g in fillOrder)
+            {
+                if (u >= unseeded.Count) break;
+                foreach (var pos in g.Positions)
+                {
+                    if (u >= unseeded.Count) break;
+                    if (slots[pos] is null)
                     {
-                        slots[nextPosition] = seeded[i];
-                        nextPosition += 2;
-
-                        if (nextPosition >= size)
-                        {
-                            nextPosition = 3;
-                            while (nextPosition < size && slots[nextPosition] != null)
-                                nextPosition += 2;
-                        }
+                        slots[pos] = unseeded[u++];
+                        break;
                     }
                 }
             }
-            else if (seeded.Count == 1)
+
+            // Second pass: fill remaining empty positions with remaining unseeded players in match order
+            foreach (var g in groupMap)
             {
-                slots[0] = seeded[0];
+                if (u >= unseeded.Count) break;
+                foreach (var pos in g.Positions)
+                {
+                    if (u >= unseeded.Count) break;
+                    if (slots[pos] is null)
+                    {
+                        slots[pos] = unseeded[u++];
+                    }
+                }
             }
 
-            int u = 0;
-            for (int i = 0; i < size; i++)
-                if (slots[i] is null)
-                    slots[i] = (u < unseeded.Count) ? unseeded[u++] : null;
-
             return slots;
+        }
+
+        private static int[] BuildSeedPositions(int size)
+        {
+            if (size < 2)
+                return Array.Empty<int>();
+            if ((size & 1) == 1)
+                throw new InvalidOperationException("Bracket size must be a power of two for seed positions.");
+            if (size == 2)
+                return new[] { 0, 1 };
+
+            var half = size / 2;
+            var prev = BuildSeedPositions(half);
+            var res = new int[size];
+            int idx = 0;
+            foreach (var p in prev)
+                res[idx++] = p;
+            foreach (var p in prev)
+                res[idx++] = size - 1 - p;
+            return res;
         }
 
 
@@ -2524,7 +2640,7 @@ namespace PoolMate.Api.Services
                     FargoRating = tp.SkillLevel
                 }, ct);
 
-            // Assign players to slots
+            // Assign players to slots using the explicit slot positions the client provided
             foreach (var assignment in assignments)
             {
                 if (assignment.SlotPosition >= 0 && assignment.SlotPosition < bracketSize)
