@@ -440,6 +440,8 @@ public class TournamentsController : ControllerBase
         return Ok(dto);
     }
 
+    
+
     [HttpPost("{id}/bracket/create")]
     public async Task<IActionResult> CreateBracket(
         int id,
