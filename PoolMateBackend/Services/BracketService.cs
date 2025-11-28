@@ -554,6 +554,9 @@ namespace PoolMate.Api.Services
                 winnerTpId = InferWinnerFromScores(match);
             }
 
+            if (winnerTpId.HasValue && (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue))
+                throw new InvalidOperationException("Both players must be assigned before recording a winner.");
+
             var hasProgress = HasProgress(match.ScoreP1, match.ScoreP2, match.TableId);
 
             if ((winnerTpId.HasValue || hasProgress) &&
@@ -840,9 +843,7 @@ namespace PoolMate.Api.Services
                 .AsNoTracking()
                 .ToListAsync(ct);
 
-            var countedMatches = matches
-                .Where(ShouldIncludeInSummary)
-                .ToList();
+            var countedMatches = matches.ToList();
 
             var summary = new TournamentStatusSummaryDto
             {
@@ -932,6 +933,10 @@ namespace PoolMate.Api.Services
                 ValidateScoringAccess(match, actor, ensureNotCompleted: true);
                 ApplyRowVersion(match, request.RowVersion);
                 ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
+
+                var intendsToUpdateScoresOrRace = request.ScoreP1.HasValue || request.ScoreP2.HasValue || request.RaceTo.HasValue;
+                if (intendsToUpdateScoresOrRace && (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue))
+                    throw new InvalidOperationException("Both players must be assigned before updating scores or race-to.");
 
                 if (request.RaceTo.HasValue)
                     match.RaceTo = request.RaceTo;
