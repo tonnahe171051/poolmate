@@ -540,6 +540,70 @@ namespace PoolMate.Api.Services
                         queue.Enqueue(nextLoserMatch);
                     }
                 }
+                else
+                {
+                    // Additional sweep: if this match is in the losers bracket
+                    // and one side is WinnerOf(someMatch) while that source
+                    // is effectively impossible to produce a winner (its
+                    // losers subtree cannot produce anyone), attempt to mark
+                    // this match resolved when appropriate. We already handle
+                    // the strict two-LoserOf-empty case earlier; here we try a
+                    // looser heuristic to unblock common BYE chains.
+                    try
+                    {
+                        if (match.Bracket == BracketSide.Losers)
+                        {
+                            // If one side already has a player and the other side
+                            // is sourced from a match that is completed but cannot
+                            // produce a loser (i.e. DetermineLoser == null), then
+                            // we can complete by bye.
+                            if (match.Player1TpId.HasValue && !match.Player2TpId.HasValue)
+                            {
+                                if (match.Player2SourceType == MatchSlotSourceType.LoserOf && match.Player2SourceMatchId.HasValue)
+                                {
+                                    if (matchDict.TryGetValue(match.Player2SourceMatchId.Value, out var src) && src.Status == MatchStatus.Completed)
+                                    {
+                                        var l = DetermineLoser(src);
+                                        if (!l.HasValue)
+                                        {
+                                            // complete this match by bye
+                                            match.WinnerTpId = match.Player1TpId;
+                                            match.WinnerTp = match.Player1Tp;
+                                            match.Status = MatchStatus.Completed;
+                                            changed = true;
+                                            if (match.NextWinnerMatchId.HasValue && matchDict.TryGetValue(match.NextWinnerMatchId.Value, out var nw2))
+                                                queue.Enqueue(nw2);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (match.Player2TpId.HasValue && !match.Player1TpId.HasValue)
+                            {
+                                if (match.Player1SourceType == MatchSlotSourceType.LoserOf && match.Player1SourceMatchId.HasValue)
+                                {
+                                    if (matchDict.TryGetValue(match.Player1SourceMatchId.Value, out var src2) && src2.Status == MatchStatus.Completed)
+                                    {
+                                        var l2 = DetermineLoser(src2);
+                                        if (!l2.HasValue)
+                                        {
+                                            match.WinnerTpId = match.Player2TpId;
+                                            match.WinnerTp = match.Player2Tp;
+                                            match.Status = MatchStatus.Completed;
+                                            changed = true;
+                                            if (match.NextWinnerMatchId.HasValue && matchDict.TryGetValue(match.NextWinnerMatchId.Value, out var nw3))
+                                                queue.Enqueue(nw3);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // swallow — sweep is heuristic and must not break processing
+                    }
+                }
             }
 
             if (changed)
@@ -1116,6 +1180,37 @@ namespace PoolMate.Api.Services
             {
                 _lockService.Release(matchId, lockResult.LockId, actor.ActorId);
             }
+        }
+
+        public async Task ForceCompleteMatchAsync(int matchId, CancellationToken ct)
+        {
+            var match = await LoadMatchAggregateAsync(matchId, ct);
+
+            if (match.Stage.Status == StageStatus.Completed)
+                throw new InvalidOperationException("Stage has been completed and cannot be modified.");
+
+            if (match.Status == MatchStatus.Completed)
+                return;
+
+            var previousStatus = match.Status;
+            var previousTableId = match.TableId;
+
+            // Mark completed with no winner to indicate resolved but empty
+            match.WinnerTpId = null;
+            match.WinnerTp = null;
+            match.ScoreP1 = match.ScoreP1 ?? 0;
+            match.ScoreP2 = match.ScoreP2 ?? 0;
+            match.Status = MatchStatus.Completed;
+
+            await UpdateTableUsageAsync(match, previousTableId, previousStatus, ct);
+
+            var matchDict = await LoadTournamentMatchesDictionaryAsync(match.TournamentId, ct);
+            // Do NOT propagate a loser/winner because there is none; but
+            // marking Completed will allow consumers that wait on source
+            // match.Status to proceed.
+
+            await _db.SaveChangesAsync(ct);
+            await ProcessAutoAdvancements(match.TournamentId, ct);
         }
 
         public async Task ResetAsync(int tournamentId, CancellationToken ct)
@@ -2733,15 +2828,28 @@ namespace PoolMate.Api.Services
                 return true;
 
             if (sourceType == MatchSlotSourceType.WinnerOf)
-                return true;
-
-            if (sourceType == MatchSlotSourceType.LoserOf)
             {
+                // Wait only while the source match is not completed. Once the
+                // source match has completed the winner will be known (or not),
+                // and downstream matches should not indefinitely await.
                 if (sourceMatch.Status != MatchStatus.Completed)
                     return true;
 
-                var loser = DetermineLoser(sourceMatch);
-                return loser.HasValue;
+                return false;
+            }
+
+            if (sourceType == MatchSlotSourceType.LoserOf)
+            {
+                // For loser-sourced slots we only need to wait while the source
+                // match is not yet completed. Once the source match is completed
+                // there will never be a later loser value (it either exists or
+                // it does not), so we should NOT await further — allowing the
+                // downstream match to auto-complete when the opposite slot is
+                // a BYE.
+                if (sourceMatch.Status != MatchStatus.Completed)
+                    return true;
+
+                return false;
             }
 
             return false;
