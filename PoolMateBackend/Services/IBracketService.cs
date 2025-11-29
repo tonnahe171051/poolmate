@@ -1,4 +1,4 @@
-﻿using PoolMate.Api.Dtos.Tournament;
+﻿﻿using PoolMate.Api.Dtos.Tournament;
 
 namespace PoolMate.Api.Services
 {
@@ -18,7 +18,6 @@ namespace PoolMate.Api.Services
         Task<MatchScoreUpdateResponse> UpdateLiveScoreAsync(int matchId, UpdateLiveScoreRequest request, ScoringContext actor, CancellationToken ct);
         Task<MatchScoreUpdateResponse> CompleteMatchAsync(int matchId, CompleteMatchRequest request, ScoringContext actor, CancellationToken ct);
         Task ResetAsync(int tournamentId, CancellationToken ct);
-        Task ForceCompleteMatchAsync(int matchId, CancellationToken ct);
 
     }
 }

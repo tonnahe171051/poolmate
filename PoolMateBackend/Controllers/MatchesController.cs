@@ -15,25 +15,6 @@ public class MatchesController : ControllerBase
     public MatchesController(IBracketService bracketService)
         => _bracketService = bracketService;
 
-    [HttpPost("{id:int}/force-complete")]
-    [Authorize(Roles = "Admin")]
-    public async Task<IActionResult> ForceComplete(int id, CancellationToken ct)
-    {
-        try
-        {
-            await _bracketService.ForceCompleteMatchAsync(id, ct);
-            return NoContent();
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound();
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
-    }
-
     [HttpPut("{id:int}")]
     public async Task<ActionResult<MatchDto>> Update(int id, [FromBody] UpdateMatchRequest request, CancellationToken ct)
     {
