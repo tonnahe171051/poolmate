@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Identity;
 using PoolMate.Api.Common;
 using PoolMate.Api.Models;
 using PoolMate.Api.Dtos.Response;
+using PoolMate.Api.Data;
 
 namespace PoolMate.Api.Controllers;
 
@@ -19,13 +20,18 @@ public class PlayerProfileController : ControllerBase
     private readonly IPlayerProfileService _service;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ILogger<PlayerProfileController> _logger;
+    private readonly ApplicationDbContext _db;
 
-    public PlayerProfileController(IPlayerProfileService service, UserManager<ApplicationUser> userManager,
-        ILogger<PlayerProfileController> logger)
+    public PlayerProfileController(
+        IPlayerProfileService service, 
+        UserManager<ApplicationUser> userManager,
+        ILogger<PlayerProfileController> logger,
+        ApplicationDbContext db)
     {
         _service = service;
         _userManager = userManager;
         _logger = logger;
+        _db = db;
     }
 
 
@@ -159,6 +165,150 @@ public class PlayerProfileController : ControllerBase
         }
     }
 
+
+    [HttpGet("{slug}")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ApiResponse<PlayerProfileDetailDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PlayerProfileDetailDto>>> GetPlayerBySlug(
+        string slug,
+        CancellationToken ct)
+    {
+        try
+        {
+            var player = await _service.GetPlayerBySlugAsync(slug, ct);
+            if (player == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(404, $"Player with slug '{slug}' not found"));
+            }
+            return Ok(ApiResponse<PlayerProfileDetailDto>.Ok(player));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching player by slug {Slug}", slug);
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
+    }
+
+    /// <summary>
+    /// Lấy lịch sử các giải đấu mà player đã tham gia
+    /// </summary>
+    [HttpGet("my-tournaments")]
+    [ProducesResponseType(typeof(ApiResponse<PagingList<PlayerTournamentDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PagingList<PlayerTournamentDto>>>> GetMyTournaments(
+        [FromQuery] int pageIndex = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return Unauthorized(ApiResponse<object>.Fail(401, "User not authenticated"));
+            }
+
+            var profiles = await _service.GetMyPlayerProfilesAsync(userId, ct);
+            var mainProfile = profiles.FirstOrDefault();
+            
+            if (mainProfile == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(404, 
+                    "You don't have a player profile yet. Please create one first."));
+            }
+
+            var tournaments = await _service.GetMyTournamentsHistoryAsync(mainProfile.Id, pageIndex, pageSize, ct);
+            return Ok(ApiResponse<PagingList<PlayerTournamentDto>>.Ok(tournaments));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching tournament history for user {UserId}",
+                User.FindFirstValue(ClaimTypes.NameIdentifier));
+            return StatusCode(500, ApiResponse<PagingList<PlayerTournamentDto>>.Fail(500, "Internal server error"));
+        }
+    }
+
+    // ========== PUBLIC ENDPOINTS - Anyone can access ==========
+
+    /// <summary>
+    /// Lấy match history của player theo ID (Public - AllowAnonymous)
+    /// </summary>
+    [HttpGet("{playerId}/matches")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ApiResponse<PagingList<MatchHistoryDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PagingList<MatchHistoryDto>>>> GetPlayerMatches(
+        int playerId,
+        [FromQuery] int pageIndex = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // Kiểm tra player có tồn tại không
+            var playerExists = await _service.GetMyPlayerProfilesAsync(playerId.ToString(), ct);
+            if (playerExists == null || !playerExists.Any())
+            {
+                // Thử kiểm tra bằng cách khác
+                var player = await _db.Players.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.Id == playerId, ct);
+                    
+                if (player == null)
+                {
+                    return NotFound(ApiResponse<object>.Fail(404, $"Player with ID {playerId} not found"));
+                }
+            }
+
+            var matches = await _service.GetMatchHistoryByPlayerIdAsync(playerId, pageIndex, pageSize, ct);
+            return Ok(ApiResponse<PagingList<MatchHistoryDto>>.Ok(matches));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching match history for player {PlayerId}", playerId);
+            return StatusCode(500, ApiResponse<PagingList<MatchHistoryDto>>.Fail(500, "Internal server error"));
+        }
+    }
+
+    /// <summary>
+    /// Lấy tournament history của player theo ID (Public - AllowAnonymous)
+    /// </summary>
+    [HttpGet("{playerId}/tournaments")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ApiResponse<PagingList<PlayerTournamentDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PagingList<PlayerTournamentDto>>>> GetPlayerTournaments(
+        int playerId,
+        [FromQuery] int pageIndex = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            // Kiểm tra player có tồn tại không
+            var player = await _db.Players.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == playerId, ct);
+                
+            if (player == null)
+            {
+                return NotFound(ApiResponse<object>.Fail(404, $"Player with ID {playerId} not found"));
+            }
+
+            var tournaments = await _service.GetTournamentHistoryByPlayerIdAsync(playerId, pageIndex, pageSize, ct);
+            return Ok(ApiResponse<PagingList<PlayerTournamentDto>>.Ok(tournaments));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching tournament history for player {PlayerId}", playerId);
+            return StatusCode(500, ApiResponse<PagingList<PlayerTournamentDto>>.Fail(500, "Internal server error"));
+        }
+    }
+
     [HttpGet("my-stats")]
     [ProducesResponseType(typeof(ApiResponse<PlayerStatsDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<PlayerStatsDto>>> GetMyStats(
@@ -182,6 +332,40 @@ public class PlayerProfileController : ControllerBase
             _logger.LogError(ex, "Error fetching stats for user {UserId}",
                 User.FindFirstValue(ClaimTypes.NameIdentifier));
             return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
+    }
+
+
+    [HttpGet]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ApiResponse<PagingList<PlayerListDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PagingList<PlayerListDto>>>> GetAllPlayers(
+        [FromQuery] int pageIndex = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] bool? hasSkillLevel = null,
+        [FromQuery] string? searchTerm = null,
+        [FromQuery] string? country = null,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var filter = new PlayerListFilterDto
+            {
+                PageIndex = pageIndex,
+                PageSize = pageSize,
+                HasSkillLevel = hasSkillLevel,
+                SearchTerm = searchTerm,
+                Country = country
+            };
+
+            var players = await _service.GetAllPlayersAsync(filter, ct);
+            return Ok(ApiResponse<PagingList<PlayerListDto>>.Ok(players));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching player list");
+            return StatusCode(500, ApiResponse<PagingList<PlayerListDto>>.Fail(500, "Internal server error"));
         }
     }
 }

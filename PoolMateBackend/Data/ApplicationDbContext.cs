@@ -99,6 +99,7 @@ namespace PoolMate.Api.Data
             var pl = builder.Entity<Player>();
             pl.Property(x => x.Country).HasMaxLength(2);
             pl.HasIndex(x => x.FullName);
+            pl.HasIndex(x => x.Slug).IsUnique();
             pl.HasOne(x => x.User)
               .WithMany()
               .HasForeignKey(x => x.UserId)

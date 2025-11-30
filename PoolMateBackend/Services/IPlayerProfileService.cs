@@ -15,7 +15,37 @@ public interface IPlayerProfileService
         string userId,
         CancellationToken ct = default);
 
-    Task<PagingList<MatchHistoryDto>> GetMatchHistoryAsync(int playerId, int pageIndex = 1, int pageSize = 20, CancellationToken ct = default);
-    
+    Task<PagingList<MatchHistoryDto>> GetMatchHistoryAsync(int playerId, int pageIndex = 1, int pageSize = 20,
+        CancellationToken ct = default);
+
     Task<PlayerStatsDto> GetPlayerStatsAsync(int playerId, CancellationToken ct = default);
+    
+
+    Task<PlayerProfileDetailDto?> GetPlayerBySlugAsync(
+        string slug,
+        CancellationToken ct = default);
+
+    Task<PagingList<PlayerTournamentDto>> GetMyTournamentsHistoryAsync(
+        int playerId,
+        int pageIndex = 1,
+        int pageSize = 20,
+        CancellationToken ct = default);
+
+    // Public APIs - Anyone can access
+    Task<PagingList<MatchHistoryDto>> GetMatchHistoryByPlayerIdAsync(
+        int playerId,
+        int pageIndex = 1,
+        int pageSize = 20,
+        CancellationToken ct = default);
+
+    Task<PagingList<PlayerTournamentDto>> GetTournamentHistoryByPlayerIdAsync(
+        int playerId,
+        int pageIndex = 1,
+        int pageSize = 20,
+        CancellationToken ct = default);
+
+    // List all players with pagination and filtering
+    Task<PagingList<PlayerListDto>> GetAllPlayersAsync(
+        PlayerListFilterDto filter,
+        CancellationToken ct = default);
 }

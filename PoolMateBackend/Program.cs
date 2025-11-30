@@ -221,6 +221,7 @@ builder.Services.AddScoped<IAdminUserService, AdminUserService>();
 builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
 builder.Services.AddScoped<IPlayerProfileService, PlayerProfileService>();
 builder.Services.AddScoped<IAdminPayoutService, AdminPayoutService>(); 
+builder.Services.AddScoped<IOrganizerDashboardService, OrganizerDashboardService>();
 
 // Cloudinary
 builder.Services.AddSingleton(sp =>

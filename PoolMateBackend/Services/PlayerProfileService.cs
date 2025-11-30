@@ -32,6 +32,15 @@ public class PlayerProfileService : IPlayerProfileService
         {
             fullNameMap = user.UserName ?? "Unknown Player";
         }
+        
+        string baseSlug = SlugHelper.GenerateSlug(fullNameMap);
+        string finalSlug = baseSlug;
+        int count = 1;
+        while (await _db.Players.AsNoTracking().AnyAsync(p => p.Slug == finalSlug, ct))
+        {
+            finalSlug = $"{baseSlug}-{count}";
+            count++;
+        }
 
         var newPlayer = new Player
         {
@@ -39,6 +48,7 @@ public class PlayerProfileService : IPlayerProfileService
             CreatedAt = DateTime.UtcNow,
             Email = user.Email,
             FullName = fullNameMap,
+            Slug = finalSlug, 
             Nickname = user.Nickname,
             Phone = user.PhoneNumber,
             Country = user.Country,
@@ -48,6 +58,7 @@ public class PlayerProfileService : IPlayerProfileService
 
         _db.Players.Add(newPlayer);
         await _db.SaveChangesAsync(ct);
+        
         return new CreatePlayerProfileResponseDto
         {
             FullName = newPlayer.FullName,
@@ -78,6 +89,7 @@ public class PlayerProfileService : IPlayerProfileService
             {
                 Id = p.Id,
                 FullName = p.FullName,
+                Slug = p.Slug,
                 Nickname = p.Nickname,
                 Email = p.Email,
                 Phone = p.Phone,
@@ -160,7 +172,6 @@ public class PlayerProfileService : IPlayerProfileService
 
     public async Task<PlayerStatsDto> GetPlayerStatsAsync(int playerId, CancellationToken ct = default)
     {
-        // 1. Lấy danh sách các "nhân vật" (TournamentPlayer IDs) của player này
         var tpIds = await _db.TournamentPlayers
             .AsNoTracking()
             .Where(tp => tp.PlayerId == playerId)
@@ -169,18 +180,16 @@ public class PlayerProfileService : IPlayerProfileService
 
         if (tpIds.Count == 0)
         {
-            // Chưa tham gia giải nào -> Trả về chỉ số 0
             return new PlayerStatsDto();
         }
 
         // 2. Lấy tất cả trận đấu đã kết thúc
-        // Chỉ lấy các trường cần thiết để tính toán (Projection) cho nhẹ
         var matches = await _db.Matches
             .AsNoTracking()
             .Where(m => m.Status == MatchStatus.Completed &&
                         ((m.Player1TpId.HasValue && tpIds.Contains(m.Player1TpId.Value)) ||
                          (m.Player2TpId.HasValue && tpIds.Contains(m.Player2TpId.Value))))
-            .OrderByDescending(m => m.Tournament.StartUtc) // Sắp xếp mới nhất để lấy Recent Form
+            .OrderByDescending(m => m.Tournament.StartUtc) 
             .ThenByDescending(m => m.ScheduledUtc)
             .Select(m => new
             {
@@ -228,8 +237,6 @@ public class PlayerProfileService : IPlayerProfileService
         // 4. Tính tổng số giải đã tham gia
         // (Đếm số lượng TournamentPlayer unique của player này)
         var totalTournaments = tpIds.Count;
-        // Lưu ý: tpIds chính là danh sách tham gia, mỗi giải 1 ID, nên Count chính là số giải.
-
         // 5. Đóng gói kết quả
         var totalMatches = matches.Count;
         var winRate = totalMatches > 0
@@ -260,5 +267,170 @@ public class PlayerProfileService : IPlayerProfileService
             RecentForm = recentForm, // ["W", "W", "L", "W", "L"]
             StatsByGameType = statsByGameType
         };
+    }
+
+    public async Task<PlayerProfileDetailDto?> GetPlayerBySlugAsync(string slug, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(slug))
+        {
+            return null;
+        }
+
+        var player = await _db.Players.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.Slug == slug, ct);
+
+        if (player == null)
+        {
+            return null;
+        }
+
+        return new PlayerProfileDetailDto
+        {
+            Id = player.Id,
+            FullName = player.FullName,
+            Slug = player.Slug,
+            Nickname = player.Nickname,
+            Email = player.Email,
+            Phone = player.Phone,
+            Country = player.Country,
+            City = player.City,
+            SkillLevel = player.SkillLevel,
+            CreatedAt = player.CreatedAt
+        };
+    }
+
+    public async Task<PagingList<PlayerTournamentDto>> GetMyTournamentsHistoryAsync(
+        int playerId, 
+        int pageIndex = 1, 
+        int pageSize = 20, 
+        CancellationToken ct = default)
+    {
+        // Query TournamentPlayer để lấy tất cả tournaments mà player đã tham gia
+        var query = _db.TournamentPlayers
+            .AsNoTracking()
+            .Where(tp => tp.PlayerId == playerId)
+            .Include(tp => tp.Tournament)
+                .ThenInclude(t => t.Venue)
+            .OrderByDescending(tp => tp.Tournament.StartUtc)
+            .Select(tp => new PlayerTournamentDto
+            {
+                // Thông tin giải đấu
+                TournamentId = tp.TournamentId,
+                TournamentName = tp.Tournament.Name,
+                StartDate = tp.Tournament.StartUtc,
+                EndDate = tp.Tournament.EndUtc,
+                Status = tp.Tournament.Status.ToString(),
+                
+                // Thông tin chuyên môn
+                GameType = tp.Tournament.GameType.ToString(),
+                BracketType = tp.Tournament.BracketType.ToString(),
+                
+                // Địa điểm
+                VenueName = tp.Tournament.Venue != null ? tp.Tournament.Venue.Name : null,
+                
+                // Thông tin cá nhân của Player tại giải này
+                RegistrationStatus = tp.Status.ToString(),
+                Seed = tp.Seed,
+                SkillLevelSnapshot = tp.SkillLevel
+            });
+
+        var totalCount = await query.CountAsync(ct);
+        var items = await query
+            .Skip((pageIndex - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return PagingList<PlayerTournamentDto>.Create(items, totalCount, pageIndex, pageSize);
+    }
+
+    // ========== PUBLIC APIs - Anyone can access ==========
+
+    /// <summary>
+    /// Lấy match history của bất kỳ player nào (public)
+    /// </summary>
+    public async Task<PagingList<MatchHistoryDto>> GetMatchHistoryByPlayerIdAsync(
+        int playerId,
+        int pageIndex = 1,
+        int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        // Tái sử dụng logic từ GetMatchHistoryAsync
+        return await GetMatchHistoryAsync(playerId, pageIndex, pageSize, ct);
+    }
+
+    /// <summary>
+    /// Lấy tournament history của bất kỳ player nào (public)
+    /// </summary>
+    public async Task<PagingList<PlayerTournamentDto>> GetTournamentHistoryByPlayerIdAsync(
+        int playerId,
+        int pageIndex = 1,
+        int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        // Tái sử dụng logic từ GetMyTournamentsHistoryAsync
+        return await GetMyTournamentsHistoryAsync(playerId, pageIndex, pageSize, ct);
+    }
+
+    /// <summary>
+    /// Lấy danh sách tất cả players với phân trang và lọc
+    /// </summary>
+    public async Task<PagingList<PlayerListDto>> GetAllPlayersAsync(
+        PlayerListFilterDto filter,
+        CancellationToken ct = default)
+    {
+        var query = _db.Players.AsNoTracking();
+
+        // Filter by HasSkillLevel
+        if (filter.HasSkillLevel.HasValue)
+        {
+            if (filter.HasSkillLevel.Value)
+            {
+                // Players WITH skill level
+                query = query.Where(p => p.SkillLevel.HasValue);
+            }
+            else
+            {
+                // Players WITHOUT skill level
+                query = query.Where(p => !p.SkillLevel.HasValue);
+            }
+        }
+
+        // Filter by search term (FullName or Nickname)
+        if (!string.IsNullOrWhiteSpace(filter.SearchTerm))
+        {
+            var searchLower = filter.SearchTerm.ToLower();
+            query = query.Where(p => 
+                p.FullName.ToLower().Contains(searchLower) || 
+                (p.Nickname != null && p.Nickname.ToLower().Contains(searchLower)));
+        }
+
+        // Filter by country
+        if (!string.IsNullOrWhiteSpace(filter.Country))
+        {
+            query = query.Where(p => p.Country == filter.Country);
+        }
+
+        // Get total count
+        var totalCount = await query.CountAsync(ct);
+
+        // Get paginated items
+        var items = await query
+            .OrderBy(p => p.FullName) // Sort by name
+            .Skip((filter.PageIndex - 1) * filter.PageSize)
+            .Take(filter.PageSize)
+            .Select(p => new PlayerListDto
+            {
+                Id = p.Id,
+                FullName = p.FullName,
+                Slug = p.Slug, // Important: Include Slug for frontend routing
+                Nickname = p.Nickname,
+                Country = p.Country,
+                City = p.City,
+                SkillLevel = p.SkillLevel,
+                CreatedAt = p.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        return PagingList<PlayerListDto>.Create(items, totalCount, filter.PageIndex, filter.PageSize);
     }
 }
