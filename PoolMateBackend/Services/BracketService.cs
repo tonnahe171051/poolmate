@@ -188,6 +188,10 @@ namespace PoolMate.Api.Services
                     .FirstOrDefaultAsync(x => x.Id == tournamentId, ct)
                     ?? throw new KeyNotFoundException("Tournament not found");
 
+                // Defensive validation: multi-stage tournaments must not use Single Elimination for Stage 1
+                if (t.IsMultiStage && t.BracketType == BracketType.SingleElimination)
+                    throw new InvalidOperationException("Tournament configured as multi-stage cannot use Single Elimination for Stage 1.");
+
                 var anyMatches = await _db.Matches.AnyAsync(m => m.TournamentId == tournamentId, ct);
                 if (anyMatches) throw new InvalidOperationException("Bracket already created.");
 
