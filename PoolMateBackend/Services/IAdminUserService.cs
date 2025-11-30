@@ -5,16 +5,16 @@ namespace PoolMate.Api.Services;
 
 public interface IAdminUserService
 {
-    /// Lấy danh sách users với phân trang và filter
+
     Task<Response> GetUsersAsync(AdminUserFilterDto filter, CancellationToken ct);
-    
-    /// Lấy chi tiết 1 user cụ thể
     Task<Response> GetUserDetailAsync(string userId, CancellationToken ct);
-    
-    /// Deactivate user (lock account vĩnh viễn)
+    Task<Response> GetUserStatisticsAsync(CancellationToken ct);
+    Task<Response> GetUserActivityLogAsync(string userId, CancellationToken ct); 
     Task<Response> DeactivateUserAsync(string userId, CancellationToken ct);
-    
-    /// Reactivate user (unlock account đã bị deactivate)
     Task<Response> ReactivateUserAsync(string userId, CancellationToken ct);
+    Task<Response> BulkDeactivateUsersAsync(BulkDeactivateUsersDto request, CancellationToken ct);
+    Task<Response> BulkReactivateUsersAsync(BulkReactivateUsersDto request, CancellationToken ct);
+    Task<Response> ExportUsersAsync(AdminUserFilterDto filter, CancellationToken ct);
+
 }
 
