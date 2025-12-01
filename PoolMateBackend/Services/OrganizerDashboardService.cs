@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using PoolMate.Api.Common;
 using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Dashboard;
 using PoolMate.Api.Models;
@@ -62,63 +63,228 @@ public class OrganizerDashboardService : IOrganizerDashboardService
             Timestamp = DateTime.UtcNow
         };
     }
+    
 
-    public async Task<List<OrganizerActivityDto>> GetRecentActivitiesAsync(string userId, int limit,
+    public async Task<PagingList<OrganizerPlayerListDto>> GetOrganizerPlayersAsync(
+        string ownerUserId, 
+        string? search, 
+        int pageIndex, 
+        int pageSize, 
         CancellationToken ct = default)
     {
-        var since = DateTime.UtcNow.AddDays(-30);
-
-        // A. VĐV đăng ký
-        var registrations = await _db.TournamentPlayers.AsNoTracking()
+        // 1. Query từ bảng TournamentPlayers
+        var query = _db.TournamentPlayers
+            .AsNoTracking()
             .Include(tp => tp.Tournament)
-            .Where(tp => tp.Tournament.OwnerUserId == userId && tp.Tournament.CreatedAt >= since)
-            .OrderByDescending(tp => tp.Id)
-            .Take(limit)
-            .Select(tp => new OrganizerActivityDto
+            // QUAN TRỌNG: Chỉ lấy VĐV thuộc các giải do User này làm chủ
+            .Where(tp => tp.Tournament.OwnerUserId == ownerUserId); 
+
+        // 2. Tìm kiếm theo tên VĐV hoặc tên giải đấu
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim().ToLower();
+            query = query.Where(tp => 
+                tp.DisplayName.ToLower().Contains(s) || 
+                tp.Tournament.Name.ToLower().Contains(s));
+        }
+
+        // 3. Đếm tổng số (Phục vụ phân trang)
+        var totalCount = await query.CountAsync(ct);
+
+        // 4. Lấy dữ liệu & Phân trang
+        // Sắp xếp: VĐV tham gia gần nhất lên đầu
+        var items = await query
+            .OrderByDescending(tp => tp.Tournament.StartUtc) 
+            .Skip((pageIndex - 1) * pageSize)
+            .Take(pageSize)
+            .Select(tp => new OrganizerPlayerListDto
             {
-                CreatedAt = tp.Tournament.CreatedAt, // Tạm dùng ngày tạo giải nếu TP ko có CreatedAt
-                Message = $"VĐV {tp.DisplayName} đăng ký giải {tp.Tournament.Name}",
-                Type = "PlayerRegistration"
+                TournamentPlayerId = tp.Id,
+                DisplayName = tp.DisplayName,
+                Email = tp.Email,
+                Phone = tp.Phone,
+                SkillLevel = tp.SkillLevel,
+                
+                TournamentId = tp.TournamentId,
+                TournamentName = tp.Tournament.Name,
+                JoinedDate = tp.Tournament.CreatedAt // Hoặc StartUtc
             })
             .ToListAsync(ct);
 
-        // B. Giải mới tạo
-        var created = await _db.Tournaments.AsNoTracking()
-            .Where(t => t.OwnerUserId == userId && t.CreatedAt >= since)
+        return PagingList<OrganizerPlayerListDto>.Create(items, totalCount, pageIndex, pageSize);
+    }
+
+    public async Task<PagingList<OrganizerPlayerDto>> GetMyPlayersAsync(
+        string userId, 
+        int? tournamentId, // Lọc theo giải đấu cụ thể (optional)
+        string? search, 
+        int pageIndex, 
+        int pageSize, 
+        CancellationToken ct = default)
+    {
+        // 1. Khởi tạo Query
+        var query = _db.TournamentPlayers
+            .AsNoTracking()
+            .Include(tp => tp.Tournament)
+            // Luôn phải check OwnerUserId để đảm bảo bảo mật (không xem trộm giải người khác)
+            .Where(tp => tp.Tournament.OwnerUserId == userId);
+
+        // 2. 👇 LOGIC MỚI: Nếu có ID giải đấu thì lọc theo giải đó
+        if (tournamentId.HasValue)
+        {
+            query = query.Where(tp => tp.TournamentId == tournamentId.Value);
+        }
+
+        // 3. Tìm kiếm theo tên VĐV hoặc tên giải
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim().ToLower();
+            query = query.Where(tp => 
+                tp.DisplayName.ToLower().Contains(s) || 
+                tp.Tournament.Name.ToLower().Contains(s));
+        }
+
+        // 4. Đếm tổng
+        var totalCount = await query.CountAsync(ct);
+
+        // 5. Lấy dữ liệu & Phân trang
+        var items = await query
+            .OrderByDescending(tp => tp.Tournament.StartUtc) // Mới nhất lên đầu
+            .Skip((pageIndex - 1) * pageSize)
+            .Take(pageSize)
+            .Select(tp => new OrganizerPlayerDto
+            {
+                TournamentPlayerId = tp.Id,
+                DisplayName = tp.DisplayName,
+                Email = tp.Email,
+                Phone = tp.Phone,
+                SkillLevel = tp.SkillLevel,
+                
+                TournamentId = tp.TournamentId,
+                TournamentName = tp.Tournament.Name,
+                JoinedDate = tp.Tournament.CreatedAt,
+                Status = tp.Status.ToString()
+            })
+            .ToListAsync(ct);
+
+        return PagingList<OrganizerPlayerDto>.Create(items, totalCount, pageIndex, pageSize);
+    }
+
+    public async Task<PagingList<OrganizerTournamentDto>> GetMyTournamentsAsync(
+        string userId, 
+        string? search, 
+        TournamentStatus? status, 
+        int pageIndex, 
+        int pageSize, 
+        CancellationToken ct = default)
+    {
+        // 1. Khởi tạo Query
+        var query = _db.Tournaments
+            .AsNoTracking()
+            .Where(t => t.OwnerUserId == userId);
+
+        // 2. Lọc theo Trạng thái (nếu có)
+        if (status.HasValue)
+        {
+            query = query.Where(t => t.Status == status.Value);
+        }
+
+        // 3. Tìm kiếm theo tên
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim().ToLower();
+            query = query.Where(t => t.Name.ToLower().Contains(s));
+        }
+
+        // 4. Đếm tổng số
+        var totalCount = await query.CountAsync(ct);
+
+        // 5. Lấy dữ liệu & Phân trang
+        // Sắp xếp: Giải mới tạo lên đầu
+        var items = await query
             .OrderByDescending(t => t.CreatedAt)
-            .Take(limit)
-            .Select(t => new OrganizerActivityDto
+            .Skip((pageIndex - 1) * pageSize)
+            .Take(pageSize)
+            .Select(t => new OrganizerTournamentDto
             {
+                Id = t.Id,
+                Name = t.Name,
+                Status = t.Status.ToString(),
+                GameType = t.GameType.ToString(),
+                StartDate = t.StartUtc,
                 CreatedAt = t.CreatedAt,
-                Message = $"Bạn đã tạo giải đấu \"{t.Name}\"",
-                Type = "TournamentCreated"
+                
+                // Đếm số lượng VĐV và Trận đấu trong giải đó
+                PlayerCount = t.TournamentPlayers.Count,
+                MatchCount = t.Matches.Count
             })
             .ToListAsync(ct);
 
-        // C. Giải bắt đầu
-        var started = await _db.Tournaments.AsNoTracking()
-            .Where(t => t.OwnerUserId == userId && t.Status == TournamentStatus.InProgress && t.UpdatedAt >= since)
-            .OrderByDescending(t => t.UpdatedAt)
-            .Take(limit)
-            .Select(t => new OrganizerActivityDto
-            {
-                CreatedAt = t.UpdatedAt,
-                Message = $"Giải \"{t.Name}\" đã bắt đầu",
-                Type = "TournamentStarted"
-            })
-            .ToListAsync(ct);
+        return PagingList<OrganizerTournamentDto>.Create(items, totalCount, pageIndex, pageSize);
+    }
 
-        // --- HẾT PHẦN QUERY ---
+    public async Task<TournamentOverviewDto?> GetTournamentOverviewAsync(
+        int tournamentId, 
+        string userId, 
+        CancellationToken ct = default)
+    {
+        // 1. Kiểm tra quyền sở hữu
+        var tournament = await _db.Tournaments.AsNoTracking()
+            .Where(t => t.Id == tournamentId && t.OwnerUserId == userId)
+            .Select(t => new { t.Id, t.Name, t.Status })
+            .FirstOrDefaultAsync(ct);
 
-        // 2. Gộp và Sắp xếp lại trên RAM
-        var allActivities = new List<OrganizerActivityDto>();
-        allActivities.AddRange(registrations);
-        allActivities.AddRange(created);
-        allActivities.AddRange(started);
+        if (tournament == null) return null;
 
-        return allActivities
-            .OrderByDescending(x => x.CreatedAt)
-            .Take(limit)
-            .ToList();
+        // 2. Query các chỉ số (Chạy tuần tự an toàn)
+        
+        // A. Thống kê Match
+        var matchesQuery = _db.Matches.AsNoTracking().Where(m => m.TournamentId == tournamentId);
+        var totalMatches = await matchesQuery.CountAsync(ct);
+        var completedMatches = await matchesQuery.CountAsync(m => m.Status == MatchStatus.Completed, ct);
+        var inProgressMatches = await matchesQuery.CountAsync(m => m.Status == MatchStatus.InProgress, ct);
+        
+        // Trận "Ready": Chưa đấu nhưng đã có đủ P1 và P2 (Sẵn sàng gọi tên)
+        var scheduledMatches = await matchesQuery.CountAsync(m => 
+            m.Status == MatchStatus.NotStarted && 
+            m.Player1TpId != null && 
+            m.Player2TpId != null, ct);
+
+        // B. Thống kê Player
+        var playersQuery = _db.TournamentPlayers.AsNoTracking().Where(tp => tp.TournamentId == tournamentId);
+        var totalPlayers = await playersQuery.CountAsync(ct);
+        var confirmedPlayers = await playersQuery.CountAsync(tp => tp.Status == TournamentPlayerStatus.Confirmed, ct);
+        
+        // C. Thống kê Table
+        var tablesQuery = _db.TournamentTables.AsNoTracking().Where(tt => tt.TournamentId == tournamentId);
+        var totalTables = await tablesQuery.CountAsync(ct);
+        // Bàn đang được sử dụng
+        var activeTables = await tablesQuery.CountAsync(tt => tt.Status == TableStatus.InUse, ct);
+
+        // 3. Tính toán %
+        double progress = totalMatches > 0 
+            ? Math.Round((double)completedMatches / totalMatches * 100, 1) 
+            : 0;
+
+        return new TournamentOverviewDto
+        {
+            TournamentId = tournament.Id,
+            TournamentName = tournament.Name,
+            Status = tournament.Status.ToString(),
+            
+            TotalMatches = totalMatches,
+            CompletedMatches = completedMatches,
+            InProgressMatches = inProgressMatches,
+            ScheduledMatches = scheduledMatches,
+            ProgressPercentage = progress,
+            
+            TotalPlayers = totalPlayers,
+            ConfirmedPlayers = confirmedPlayers,
+            UnconfirmedPlayers = totalPlayers - confirmedPlayers,
+            
+            TotalTables = totalTables,
+            ActiveTables = activeTables,
+            FreeTables = totalTables - activeTables
+        };
     }
 }
