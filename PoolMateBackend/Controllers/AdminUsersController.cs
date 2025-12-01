@@ -6,6 +6,7 @@ using PoolMate.Api.Dtos.Admin.Users;
 using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Services;
 using PoolMate.Api.Dtos.Response;
+using System.Security.Claims;
 
 namespace PoolMate.Api.Controllers;
 
@@ -164,7 +165,8 @@ public class AdminUsersController : ControllerBase
     {
         try
         {
-            var response = await _userService.DeactivateUserAsync(id, ct);
+            var adminId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var response = await _userService.DeactivateUserAsync(id, adminId!, ct);
             if (!response.Success)
             {
                 return BadRequest(ApiResponse<object>.Fail(400, response.Message));
@@ -217,7 +219,10 @@ public class AdminUsersController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail(400, "UserIds list cannot be empty"));
             }
 
-            var response = await _userService.BulkDeactivateUsersAsync(request, ct);
+            // 👇 Lấy ID của Admin đang đăng nhập
+            var adminId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            var response = await _userService.BulkDeactivateUsersAsync(request, adminId!, ct);
             if (!response.Success)
             {
                 return BadRequest(ApiResponse<object>.Fail(400, response.Message));

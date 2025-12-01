@@ -10,9 +10,9 @@ public interface IAdminUserService
     Task<Response> GetUserDetailAsync(string userId, CancellationToken ct);
     Task<Response> GetUserStatisticsAsync(CancellationToken ct);
     Task<Response> GetUserActivityLogAsync(string userId, CancellationToken ct); 
-    Task<Response> DeactivateUserAsync(string userId, CancellationToken ct);
+    Task<Response> DeactivateUserAsync(string userId, string adminId, CancellationToken ct);
     Task<Response> ReactivateUserAsync(string userId, CancellationToken ct);
-    Task<Response> BulkDeactivateUsersAsync(BulkDeactivateUsersDto request, CancellationToken ct);
+    Task<Response> BulkDeactivateUsersAsync(BulkDeactivateUsersDto request, string adminId, CancellationToken ct);
     Task<Response> BulkReactivateUsersAsync(BulkReactivateUsersDto request, CancellationToken ct);
     Task<Response> ExportUsersAsync(AdminUserFilterDto filter, CancellationToken ct);
 

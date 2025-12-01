@@ -9,6 +9,7 @@ using PoolMate.Api.Common;
 using PoolMate.Api.Models;
 using PoolMate.Api.Dtos.Response;
 using PoolMate.Api.Data;
+using PoolMate.Api.Dtos.Auth;
 
 namespace PoolMate.Api.Controllers;
 
@@ -39,6 +40,7 @@ public class PlayerProfileController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<CreatePlayerProfileResponseDto>), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status409Conflict)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
     public async Task<ActionResult<CreatePlayerProfileResponseDto>> CreatePlayerProfile(
@@ -50,6 +52,12 @@ public class PlayerProfileController : ControllerBase
             if (string.IsNullOrWhiteSpace(userId))
             {
                 return Unauthorized(ApiResponse<CreatePlayerProfileResponseDto>.Fail(401, "User not authenticated"));
+            }
+            
+            if (User.IsInRole(UserRoles.ADMIN))
+            {
+                return StatusCode(403, ApiResponse<object>.Fail(403, 
+                    "Administrator accounts cannot create Player Profiles. Please use a separate Player account."));
             }
 
             var user = await _userManager.FindByIdAsync(userId);

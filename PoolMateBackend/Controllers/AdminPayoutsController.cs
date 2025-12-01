@@ -4,12 +4,13 @@ using PoolMate.Api.Dtos.Admin.Payout;
 using PoolMate.Api.Dtos.Response;
 using PoolMate.Api.Services;
 using PoolMate.Api.Common;
+using PoolMate.Api.Dtos.Auth;
 
 namespace PoolMate.Api.Controllers;
 
 [ApiController]
-[Route("api/payouts")]
-[Authorize(Roles = "Organizer")]
+[Route("api/admin/payouts")]
+[Authorize(Roles = UserRoles.ADMIN)]
 public class AdminPayoutsController : ControllerBase
 {
     private readonly IAdminPayoutService _service;

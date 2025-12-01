@@ -6,12 +6,13 @@ using PoolMate.Api.Models;
 using System.Security.Claims;
 using PoolMate.Api.Dtos.Response;
 using PoolMate.Api.Services;
+using PoolMate.Api.Dtos.Auth;
 
 namespace PoolMate.Api.Controllers;
 
 [ApiController]
 [Route("api/organizer/dashboard")]
-[Authorize(Roles = "Organizer")]
+[Authorize(Roles = UserRoles.ORGANIZER)]
 public class OrganizerDashboardController : ControllerBase
 {
     private readonly IOrganizerDashboardService _service;

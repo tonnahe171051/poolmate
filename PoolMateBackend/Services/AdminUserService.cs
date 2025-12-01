@@ -544,23 +544,30 @@ public class AdminUserService : IAdminUserService
         }
     }
 
-    public async Task<Response> DeactivateUserAsync(string userId, CancellationToken ct)
+    public async Task<Response> DeactivateUserAsync(string userId, string adminId, CancellationToken ct)
     {
         try
         {
+            // 👇 1. CHECK LOGIC: Không cho phép tự khóa chính mình
+            if (userId == adminId)
+            {
+                _logger.LogWarning("Admin {AdminId} attempted to deactivate themselves.", adminId);
+                return Response.Error("You cannot deactivate your own account.");
+            }
+
             var user = await _userManager.FindByIdAsync(userId);
             if (user == null)
             {
                 return Response.Error("User not found");
             }
 
-            // 1. Kiểm tra xem user đã bị khóa trước đó chưa
+            // 2. Kiểm tra xem user đã bị khóa trước đó chưa
             if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow)
             {
                 return Response.Error("User is already deactivated");
             }
 
-            // 2. Bảo vệ tài khoản VIP/Admin (nếu LockoutEnabled = false)
+            // 3. Bảo vệ tài khoản VIP/Admin (nếu LockoutEnabled = false)
             if (!user.LockoutEnabled)
             {
                 _logger.LogWarning(
@@ -570,7 +577,7 @@ public class AdminUserService : IAdminUserService
                     "Cannot deactivate this user. This is a protected account with lockout protection enabled.");
             }
 
-            // 3. THỰC HIỆN KHÓA
+            // 4. THỰC HIỆN KHÓA
             user.LockoutEnd = DateTimeOffset.MaxValue;
             var result = await _userManager.UpdateSecurityStampAsync(user);
             if (!result.Succeeded)
@@ -580,11 +587,11 @@ public class AdminUserService : IAdminUserService
                 return Response.Error($"Failed to deactivate user: {errors}");
             }
 
-            // 4. Log & Return
+            // 5. Log & Return
             var roles = await _userManager.GetRolesAsync(user);
             _logger.LogInformation(
-                "User {UserId} ({UserName}) has been deactivated successfully. Security stamp updated.",
-                userId, user.UserName);
+                "User {UserId} ({UserName}) has been deactivated successfully by Admin {AdminId}. Security stamp updated.",
+                userId, user.UserName, adminId);
 
             return Response.Ok(new
             {
@@ -649,7 +656,7 @@ public class AdminUserService : IAdminUserService
         }
     }
 
-    public async Task<Response> BulkDeactivateUsersAsync(BulkDeactivateUsersDto request, CancellationToken ct)
+    public async Task<Response> BulkDeactivateUsersAsync(BulkDeactivateUsersDto request, string adminId, CancellationToken ct)
     {
         try
         {
@@ -661,6 +668,20 @@ public class AdminUserService : IAdminUserService
             {
                 try
                 {
+                    if (userId == adminId)
+                    {
+                        results.Add(new BulkOperationItemResultDto
+                        {
+                            UserId = userId,
+                            Success = false,
+                            ErrorMessage = "Cannot deactivate your own account",
+                            Status = "Skipped"
+                        });
+                        skippedCount++;
+                        _logger.LogWarning("Admin {AdminId} attempted to deactivate themselves in bulk operation.", adminId);
+                        continue; 
+                    }
+
                     var user = await _userManager.FindByIdAsync(userId);
                     if (user == null)
                     {
@@ -720,7 +741,7 @@ public class AdminUserService : IAdminUserService
                         });
                         successCount++;
 
-                        _logger.LogInformation("User {UserId} deactivated via bulk operation.", userId);
+                        _logger.LogInformation("User {UserId} deactivated via bulk operation by Admin {AdminId}.", userId, adminId);
                     }
                     else
                     {
