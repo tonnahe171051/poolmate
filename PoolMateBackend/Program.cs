@@ -243,6 +243,28 @@ builder.Services.AddScoped<IProfileService, ProfileService>();
 
 var app = builder.Build();
 
+// Custom validation exception middleware: convert ValidationException to HTTP 400 JSON
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (PoolMate.Api.Common.ValidationException vex)
+    {
+        context.Response.StatusCode = 400;
+        context.Response.ContentType = "application/json";
+        var payload = new
+        {
+            error = "validation_error",
+            message = vex.Message,
+            errors = vex.Errors
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(payload);
+        await context.Response.WriteAsync(json);
+    }
+});
+
 // Pipeline
 if (app.Environment.IsDevelopment())
 {

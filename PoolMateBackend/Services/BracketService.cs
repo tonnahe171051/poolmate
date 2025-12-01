@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -31,6 +31,20 @@ namespace PoolMate.Api.Services
             _lockService = lockService;
             _hubContext = hubContext;
             _logger = logger;
+        }
+
+        // Single validation helper (unified) — throws ValidationException for input validation
+        private void ValidatePlayerCountForCreate(Models.Tournament t, int count)
+        {
+            if (count < 2)
+                throw new PoolMate.Api.Common.ValidationException("At least two players are required to create a bracket.");
+
+            if (t.IsMultiStage && t.AdvanceToStage2Count.HasValue)
+            {
+                var requiredPlayers = Math.Max(t.AdvanceToStage2Count.Value + 1, 5);
+                if (count < requiredPlayers)
+                    throw new PoolMate.Api.Common.ValidationException($"Multi-stage bracket requires at least {requiredPlayers} players assigned in stage 1 for advance count {t.AdvanceToStage2Count.Value}.");
+            }
         }
 
         //Preview
@@ -79,29 +93,14 @@ namespace PoolMate.Api.Services
                 type: t.BracketType,
                 ordering: stage1Ordering,
                 size: finalSize,
-                players: players
+                players: players,
+                advanceCount: t.IsMultiStage ? t.AdvanceToStage2Count : null
             );
 
+            // Do not preview Stage 2 for multi-stage tournaments here — Stage 2
+            // is only created after Stage 1 completes and therefore cannot be
+            // meaningfully previewed before Stage 1 is persisted.
             StagePreviewDto? stage2 = null;
-            if (t.IsMultiStage)
-            {
-                if (t.AdvanceToStage2Count is null || t.AdvanceToStage2Count <= 0)
-                    throw new InvalidOperationException("AdvanceToStage2Count must be set for multi-stage.");
-
-                if (t.AdvanceToStage2Count.Value < 4)
-                    throw new InvalidOperationException("AdvanceToStage2Count must be at least 4 for multi-stage tournaments.");
-
-                if ((t.AdvanceToStage2Count.Value & (t.AdvanceToStage2Count.Value - 1)) != 0)
-                    throw new InvalidOperationException("AdvanceToStage2Count must be a power of two (4,8,16,...).");
-
-                stage2 = BuildStagePreview(
-                    stageNo: 2,
-                    type: BracketType.SingleElimination,
-                    ordering: t.Stage2Ordering,
-                    size: t.AdvanceToStage2Count.Value,
-                    players: null
-                );
-            }
 
             return new BracketPreviewDto
             {
@@ -112,6 +111,74 @@ namespace PoolMate.Api.Services
             };
         }
 
+        public async Task<StagePreviewDto> PreviewStageAsync(int tournamentId, int stageNo, CancellationToken ct)
+        {
+            if (stageNo <= 0) throw new InvalidOperationException("Invalid stage number.");
+
+            var tournament = await _db.Tournaments
+                .Include(t => t.Stages)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Id == tournamentId, ct)
+                ?? throw new KeyNotFoundException("Tournament not found");
+
+            if (!tournament.IsMultiStage)
+                throw new InvalidOperationException("Tournament is not multi-stage; no separate Stage 2 preview available.");
+
+            if (stageNo == 1)
+            {
+                // Delegate to existing preview logic for stage 1
+                var players = await _db.TournamentPlayers
+                    .Where(x => x.TournamentId == tournamentId)
+                    .Select(x => new PlayerSeed
+                    {
+                        TpId = x.Id,
+                        Name = x.DisplayName,
+                        Seed = x.Seed,
+                        Country = x.Country,
+                        FargoRating = x.SkillLevel
+                    })
+                    .ToListAsync(ct);
+
+                var optimalSize = GetOptimalBracketSize(players.Count);
+                var finalSize = optimalSize;
+                if (tournament.BracketSizeEstimate.HasValue && tournament.BracketSizeEstimate.Value >= optimalSize)
+                {
+                    if (tournament.BracketSizeEstimate.Value <= optimalSize * 2)
+                        finalSize = tournament.BracketSizeEstimate.Value;
+                }
+
+                var ordering = tournament.IsMultiStage ? tournament.Stage1Ordering : tournament.BracketOrdering;
+                return BuildStagePreview(1, tournament.BracketType, ordering, finalSize, players, tournament.IsMultiStage ? tournament.AdvanceToStage2Count : null);
+            }
+
+            // stageNo == 2
+            var stage1 = tournament.Stages.FirstOrDefault(s => s.StageNo == 1)
+                ?? throw new InvalidOperationException("Stage 1 not found for tournament.");
+
+            var stageEval = await EvaluateStageAsync(stage1.Id, ct);
+
+            if (!stage1.AdvanceCount.HasValue)
+                throw new InvalidOperationException("Stage 2 not configured for this tournament.");
+
+            var targetAdvance = stageEval.TargetAdvance ?? stage1.AdvanceCount.Value;
+            if (targetAdvance < 4)
+                throw new InvalidOperationException("Stage 2 requires at least four advancing players.");
+
+            if ((targetAdvance & (targetAdvance - 1)) != 0)
+                throw new InvalidOperationException("Stage 2 bracket size must be a power of two.");
+
+            var survivors = stageEval.SurvivorTpIds.Take(targetAdvance).ToList();
+            if (!survivors.Any())
+                throw new InvalidOperationException("No survivors available to preview Stage 2.");
+
+            var playerSeeds = await GetPlayerSeedsAsync(survivors, ct);
+
+            var ordering2 = tournament.Stage2Ordering;
+            return BuildStagePreview(2, BracketType.SingleElimination, ordering2, targetAdvance, playerSeeds, null);
+        }
+
+        
+
         public async Task CreateAsync(int tournamentId, CreateBracketRequest? request, CancellationToken ct)
         {
             try
@@ -120,6 +187,10 @@ namespace PoolMate.Api.Services
                     .Include(x => x.Stages)
                     .FirstOrDefaultAsync(x => x.Id == tournamentId, ct)
                     ?? throw new KeyNotFoundException("Tournament not found");
+
+                // Defensive validation: multi-stage tournaments must not use Single Elimination for Stage 1
+                if (t.IsMultiStage && t.BracketType == BracketType.SingleElimination)
+                    throw new InvalidOperationException("Tournament configured as multi-stage cannot use Single Elimination for Stage 1.");
 
                 var anyMatches = await _db.Matches.AnyAsync(m => m.TournamentId == tournamentId, ct);
                 if (anyMatches) throw new InvalidOperationException("Bracket already created.");
@@ -143,15 +214,8 @@ namespace PoolMate.Api.Services
                         .Select(x => new PlayerSeed { TpId = x.Id, Name = x.DisplayName, Seed = x.Seed })
                         .ToListAsync(ct);
 
-                    if (players.Count < 2)
-                        throw new InvalidOperationException("At least two players are required to create a bracket.");
-
-                    if (t.IsMultiStage && t.AdvanceToStage2Count.HasValue)
-                    {
-                        var requiredPlayers = Math.Max(t.AdvanceToStage2Count.Value + 1, 5);
-                        if (players.Count < requiredPlayers)
-                            throw new InvalidOperationException($"Multi-stage bracket requires at least {requiredPlayers} players for advance count {t.AdvanceToStage2Count.Value}.");
-                    }
+                    // preserve original fail-fast checks (call unified validator)
+                    ValidatePlayerCountForCreate(t, players.Count);
 
                     var optimalSize = GetOptimalBracketSize(players.Count);
                     var finalSize = optimalSize;
@@ -163,6 +227,39 @@ namespace PoolMate.Api.Services
 
                     slots = MakeSlots(players, finalSize, stage1Ordering);
                 }
+
+                // After slots are prepared (manual or automatic), validate and possibly
+                // shrink the bracket to the optimal size based on the number of assigned players.
+                var assignedCount = slots.Count(s => s is not null && s.TpId != default);
+
+                // preserve original validation behavior (ValidationException)
+                ValidatePlayerCountForCreate(t, assignedCount);
+
+                // Compute optimal bracket size from the number of players actually assigned
+                // and shrink if necessary (e.g., user left many slots empty in manual assignment).
+                var optimalForAssigned = GetOptimalBracketSize(Math.Max(assignedCount, 2));
+                if (optimalForAssigned < slots.Count)
+                {
+                    // Rebuild slots for the smaller optimal size using only the assigned players
+                    var presentPlayers = slots.Where(s => s is not null).Select(s => s!).ToList();
+                    slots = MakeSlots(presentPlayers, optimalForAssigned, stage1Ordering);
+                }
+
+                // Finally, reject creation if any first-round match is completely empty
+                // (both slots null). This enforces a "clean" bracket for manual creations.
+                for (int i = 0; i < slots.Count / 2; i++)
+                {
+                    if (slots[2 * i] is null && slots[2 * i + 1] is null)
+                    {
+                        var err = "Bracket contains an empty first-round match. Please correct the bracket before creating.";
+                        throw new PoolMate.Api.Common.ValidationException(err, new[] { err });
+                    }
+                }
+
+                // final, pre-persist check (unified ValidationException)
+                var assignedPlayers = slots.Count(s => s is not null && s.TpId != default);
+                ValidatePlayerCountForCreate(t, assignedPlayers);
+
                 // Create Stage 1
                 var s1 = new TournamentStage
                 {
@@ -257,9 +354,16 @@ namespace PoolMate.Api.Services
                             RoundNo = roundGroup.Key
                         };
 
+                        // Build a lookup for projection resolution
+                        var matchLookup = stageMatches.ToDictionary(m => m.Id, m => m);
+
                         foreach (var match in roundGroup.OrderBy(m => m.PositionInRound))
                         {
-                            roundDto.Matches.Add(MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable));
+                            var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
+                            // Populate projected player descriptions for empty slots
+                            dto.ProjectedPlayer1 = ResolveProjectedPlayerDescription(match, 1, matchLookup, new HashSet<int>());
+                            dto.ProjectedPlayer2 = ResolveProjectedPlayerDescription(match, 2, matchLookup, new HashSet<int>());
+                            roundDto.Matches.Add(dto);
                         }
 
                         bracketDto.Rounds.Add(roundDto);
@@ -286,6 +390,70 @@ namespace PoolMate.Api.Services
 
             // Apply filter
             return ApplyBracketFilter(fullBracket, filter);
+        }
+
+        // Return only the winners-side (or knockout) brackets for each stage
+        public async Task<BracketDto> GetWinnersSideAsync(int tournamentId, CancellationToken ct)
+        {
+            var full = await GetAsync(tournamentId, ct);
+            var res = new BracketDto
+            {
+                TournamentId = full.TournamentId,
+                IsMultiStage = full.IsMultiStage,
+                Stages = new List<StageDto>()
+            };
+
+            foreach (var s in full.Stages)
+            {
+                var stage = new StageDto
+                {
+                    StageNo = s.StageNo,
+                    Type = s.Type,
+                    Ordering = s.Ordering,
+                    BracketSize = s.BracketSize,
+                    Status = s.Status,
+                    CompletedAt = s.CompletedAt,
+                    AdvanceCount = s.AdvanceCount,
+                    CanComplete = s.CanComplete,
+                    Brackets = s.Brackets.Where(b => b.BracketSide == BracketSide.Winners || b.BracketSide == BracketSide.Knockout).ToList()
+                };
+
+                if (stage.Brackets.Any()) res.Stages.Add(stage);
+            }
+
+            return res;
+        }
+
+        // Return only the losers-side brackets for each stage
+        public async Task<BracketDto> GetLosersSideAsync(int tournamentId, CancellationToken ct)
+        {
+            var full = await GetAsync(tournamentId, ct);
+            var res = new BracketDto
+            {
+                TournamentId = full.TournamentId,
+                IsMultiStage = full.IsMultiStage,
+                Stages = new List<StageDto>()
+            };
+
+            foreach (var s in full.Stages)
+            {
+                var stage = new StageDto
+                {
+                    StageNo = s.StageNo,
+                    Type = s.Type,
+                    Ordering = s.Ordering,
+                    BracketSize = s.BracketSize,
+                    Status = s.Status,
+                    CompletedAt = s.CompletedAt,
+                    AdvanceCount = s.AdvanceCount,
+                    CanComplete = s.CanComplete,
+                    Brackets = s.Brackets.Where(b => b.BracketSide == BracketSide.Losers).ToList()
+                };
+
+                if (stage.Brackets.Any()) res.Stages.Add(stage);
+            }
+
+            return res;
         }
 
         public async Task<MatchDto> GetMatchAsync(int matchId, CancellationToken ct)
@@ -507,6 +675,10 @@ namespace PoolMate.Api.Services
 
             if (match.Stage.Status == StageStatus.Completed)
                 throw new InvalidOperationException("Stage has been completed and cannot be modified.");
+
+            // Disallow manual edits to matches that are designated auto-only by the bracket
+            if (!await IsMatchManuallyEditable(match, ct))
+                throw new InvalidOperationException("This match cannot be modified manually; it is auto-propagated by bracket logic.");
 
             if (match.Status == MatchStatus.Completed)
                 throw new InvalidOperationException("Match already completed. Use correct-result workflow.");
@@ -840,9 +1012,7 @@ namespace PoolMate.Api.Services
                 .AsNoTracking()
                 .ToListAsync(ct);
 
-            var countedMatches = matches
-                .Where(ShouldIncludeInSummary)
-                .ToList();
+            var countedMatches = matches.ToList();
 
             var summary = new TournamentStatusSummaryDto
             {
@@ -932,6 +1102,10 @@ namespace PoolMate.Api.Services
                 ValidateScoringAccess(match, actor, ensureNotCompleted: true);
                 ApplyRowVersion(match, request.RowVersion);
                 ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
+
+                var intendsToUpdateScoresOrRace = request.ScoreP1.HasValue || request.ScoreP2.HasValue || request.RaceTo.HasValue;
+                if (intendsToUpdateScoresOrRace && (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue))
+                    throw new InvalidOperationException("Both players must be assigned before updating scores or race-to.");
 
                 if (request.RaceTo.HasValue)
                     match.RaceTo = request.RaceTo;
@@ -1905,72 +2079,135 @@ namespace PoolMate.Api.Services
         private sealed record MatchSlotReference(Match Match, int SlotIndex, MatchSlotSourceType? SourceType);
 
         private StagePreviewDto BuildStagePreview(
-            int stageNo, BracketType type, BracketOrdering ordering, int size, List<PlayerSeed>? players)
+            int stageNo, BracketType type, BracketOrdering ordering, int size, List<PlayerSeed>? players, int? advanceCount)
         {
             var slots = MakeSlots(players, size, ordering);
             return type == BracketType.SingleElimination
                 ? PreviewSingle(stageNo, ordering, slots)
-                : PreviewDouble(stageNo, ordering, slots);
+                : PreviewDouble(stageNo, ordering, slots, advanceCount);
         }
 
         private List<PlayerSeed?> MakeSlots(List<PlayerSeed>? players, int size, BracketOrdering ordering)
         {
             var slots = Enumerable.Repeat<PlayerSeed?>(null, size).ToList();
             if (players is null || players.Count == 0) return slots;
-
+            // If ordering is Random, distribute players round-robin across matches so
+            // each match gets at most one player before filling second slots. This
+            // maximizes number of player-vs-BYE matches for sparse fields.
             if (ordering == BracketOrdering.Random)
             {
-                // Random
-                var shuffled = players.ToList();
-                FisherYates(shuffled);
+                var list = players.ToList();
+                FisherYates(list);
+                int matchCount = size / 2;
+                int i = 0;
+                foreach (var p in list)
+                {
+                    var matchIndex = i % matchCount;
+                    var pos1 = matchIndex * 2;
+                    var pos2 = pos1 + 1;
+                    if (slots[pos1] is null)
+                        slots[pos1] = p;
+                    else
+                        slots[pos2] = p;
+                    i++;
+                }
 
-                for (int i = 0; i < Math.Min(size, shuffled.Count); i++)
-                    slots[i] = shuffled[i];
                 return slots;
             }
 
+            // For seeded ordering, place players into seed-position indices so BYEs are distributed evenly.
             var seeded = players.Where(p => p.Seed.HasValue).OrderBy(p => p.Seed!.Value).ToList();
             var unseeded = players.Where(p => !p.Seed.HasValue).ToList();
 
+            // Shuffle unseeded players so their positions are random among remaining slots
             FisherYates(unseeded);
 
-            if (seeded.Count >= 2)
+            var positions = BuildSeedPositions(size);
+
+            int idx = 0;
+            // Place seeded players in order into the seed positions
+            for (; idx < seeded.Count && idx < positions.Length; idx++)
             {
-                //Set highest and lowest seeds in first two positions
-                slots[0] = seeded[0];
-                slots[1] = seeded[^1];
+                slots[positions[idx]] = seeded[idx];
+            }
 
-                int nextPosition = 2;
-                for (int i = 1; i < seeded.Count - 1 && nextPosition < size; i++)
+            // Fill remaining positions with unseeded players
+            int u = 0;
+            // Distribute remaining unseeded players across matches so BYEs are spread
+            var remaining = positions.Skip(idx).ToList();
+
+            // Build groups per match and compute how many seeded players each group already has.
+            var groupMap = remaining
+                .GroupBy(p => p / 2)
+                .Select(g => new { MatchIndex = g.Key, Positions = g.ToList() })
+                .OrderBy(g => g.MatchIndex)
+                .ToList();
+
+            var groupsWithSeedCount = groupMap
+                .Select(g => new
                 {
-                    while (nextPosition < size && slots[nextPosition] != null)
-                        nextPosition++;
+                    g.MatchIndex,
+                    g.Positions,
+                    SeededCount = g.Positions.Count(pos => slots[pos] is not null)
+                })
+                .ToList();
 
-                    if (nextPosition < size)
+            // Order groups so that groups with fewer seeded players are filled first
+            var fillOrder = groupsWithSeedCount
+                .OrderBy(g => g.SeededCount)
+                .ThenBy(g => g.MatchIndex)
+                .ToList();
+
+            // First pass: place at most one unseeded player per match (group), prioritizing groups with 0 seeded
+            foreach (var g in fillOrder)
+            {
+                if (u >= unseeded.Count) break;
+                foreach (var pos in g.Positions)
+                {
+                    if (u >= unseeded.Count) break;
+                    if (slots[pos] is null)
                     {
-                        slots[nextPosition] = seeded[i];
-                        nextPosition += 2;
-
-                        if (nextPosition >= size)
-                        {
-                            nextPosition = 3;
-                            while (nextPosition < size && slots[nextPosition] != null)
-                                nextPosition += 2;
-                        }
+                        slots[pos] = unseeded[u++];
+                        break;
                     }
                 }
             }
-            else if (seeded.Count == 1)
+
+            // Second pass: fill remaining empty positions with remaining unseeded players in match order
+            foreach (var g in groupMap)
             {
-                slots[0] = seeded[0];
+                if (u >= unseeded.Count) break;
+                foreach (var pos in g.Positions)
+                {
+                    if (u >= unseeded.Count) break;
+                    if (slots[pos] is null)
+                    {
+                        slots[pos] = unseeded[u++];
+                    }
+                }
             }
 
-            int u = 0;
-            for (int i = 0; i < size; i++)
-                if (slots[i] is null)
-                    slots[i] = (u < unseeded.Count) ? unseeded[u++] : null;
-
             return slots;
+        }
+
+        private static int[] BuildSeedPositions(int size)
+        {
+            if (size < 2)
+                return Array.Empty<int>();
+            if ((size & 1) == 1)
+                throw new InvalidOperationException("Bracket size must be a power of two for seed positions.");
+            if (size == 2)
+                return new[] { 0, 1 };
+
+            var half = size / 2;
+            var prev = BuildSeedPositions(half);
+            var res = new int[size];
+            int idx = 0;
+            foreach (var p in prev)
+                res[idx++] = p;
+            foreach (var p in prev)
+                res[idx++] = size - 1 - p;
+            return res;
         }
 
 
@@ -2031,10 +2268,99 @@ namespace PoolMate.Api.Services
         }
 
 
-        private StagePreviewDto PreviewDouble(int stageNo, BracketOrdering ordering, List<PlayerSeed?> slots)
+        private StagePreviewDto PreviewDouble(int stageNo, BracketOrdering ordering, List<PlayerSeed?> slots, int? advanceCount)
         {
             var dto = PreviewSingle(stageNo, ordering, slots);
             dto.Type = BracketType.DoubleElimination;
+
+            // If advanceCount is provided, simulate DP rule to limit winners rounds
+            // and add losers rounds that winners feed into so preview matches Create behavior.
+            if (advanceCount.HasValue && advanceCount.Value > 0)
+            {
+                int bracketSize = slots.Count;
+                var fullWBRounds = (int)Math.Log2(bracketSize);
+                var advExp = (int)Math.Log2(advanceCount.Value);
+                int keep;
+                if (advanceCount.Value <= bracketSize / 4)
+                    keep = fullWBRounds;
+                else
+                    keep = Math.Min(Math.Max(advExp, 0), fullWBRounds);
+
+                // Rebuild winners rounds limited to 'keep'
+                dto.Rounds.Clear();
+                // Round 1 (seeds)
+                var matchesRound1 = bracketSize / 2;
+                var r1 = new RoundPreviewDto { RoundNo = 1 };
+                for (int i = 0; i < matchesRound1; i++)
+                {
+                    var p1 = slots[2 * i];
+                    var p2 = slots[2 * i + 1];
+                    r1.Matches.Add(new MatchPreviewDto
+                    {
+                        PositionInRound = i + 1,
+                        P1Name = p1?.Name,
+                        P1Seed = p1?.Seed,
+                        P1Country = p1?.Country,
+                        P2Name = p2?.Name,
+                        P2Seed = p2?.Seed,
+                        P2Country = p2?.Country,
+                        P1FargoRating = p1?.FargoRating,
+                        P2FargoRating = p2?.FargoRating
+                    });
+                }
+                dto.Rounds.Add(r1);
+
+                int roundNo = 2;
+                int m = matchesRound1 / 2;
+                int produced = 1;
+                while (m > 0 && produced < keep)
+                {
+                    var r = new RoundPreviewDto { RoundNo = roundNo++ };
+                    for (int i = 0; i < m; i++)
+                    {
+                        r.Matches.Add(new MatchPreviewDto
+                        {
+                            PositionInRound = i + 1,
+                            P1Name = null,
+                            P2Name = null,
+                            P1Country = null,
+                            P2Country = null
+                        });
+                    }
+                    dto.Rounds.Add(r);
+                    produced++;
+                    m /= 2;
+                }
+
+                // Build losers preview rounds: always append the full losers-side structure
+                // as empty match slots after the winners rounds so FE renders the same frame.
+                var pattern = GetLosersPattern(bracketSize);
+                var totalLosersRounds = pattern.Length;
+
+                // Winners rounds count currently in dto.Rounds
+                int existingWinnersRounds = dto.Rounds.Count;
+
+                for (int lr = 1; lr <= totalLosersRounds; lr++)
+                {
+                    var matchesInRound = pattern[lr - 1];
+                    var r = new RoundPreviewDto { RoundNo = existingWinnersRounds + lr };
+                    for (int pos = 1; pos <= matchesInRound; pos++)
+                    {
+                        r.Matches.Add(new MatchPreviewDto
+                        {
+                            PositionInRound = pos,
+                            P1Name = null,
+                            P2Name = null,
+                            P1Country = null,
+                            P2Country = null
+                        });
+                    }
+                    dto.Rounds.Add(r);
+                }
+
+                // Do not add Finals here for multi-stage Stage1
+            }
+
             return dto;
         }
 
@@ -2050,14 +2376,71 @@ namespace PoolMate.Api.Services
                 if ((slots.Count & (slots.Count - 1)) != 0)
                     throw new InvalidOperationException("Double elimination bracket requires the bracket size to be a power of two.");
 
-                // 1. Tạo Winners bracket
-                var winnersMatches = BuildWinnersBracket(tournamentId, stage, slots, ct);
+                // Compute how many winners rounds we should keep.
+                // Option A: keep all winners rounds except the final winners round
+                // (i.e. fullDepth - 1). This yields winners progression like 8 -> 4 -> 2
+                // for a 16-slot bracket (fullDepth=4 => keep=3).
+                int bracketSize = slots.Count;
+                int? keepWinnersRounds = null;
+                if (stage.AdvanceCount.HasValue && stage.AdvanceCount.Value > 0)
+                {
+                        var fullWBRounds = (int)Math.Log2(bracketSize);
+                        var advExp = (int)Math.Log2(stage.AdvanceCount.Value);
+                        // DP rule: if advance count is small (<= bracketSize/4) keep full winners depth,
+                        // otherwise keep = log2(AdvanceCount). This reproduces DP's examples such as
+                        // S=16,A=4 -> keep=4 (full), S=16,A=8 -> keep=3 (log2(8)).
+                        int keep;
+                        if (stage.AdvanceCount.Value <= bracketSize / 4)
+                            keep = fullWBRounds;
+                        else
+                            keep = Math.Min(Math.Max(advExp, 0), fullWBRounds);
+                        keepWinnersRounds = keep;
+                }
 
-                // 2. Tạo Losers bracket  
-                var losersMatches = BuildLosersBracket(tournamentId, stage, slots.Count, ct);
+                // 1. Tạo Winners bracket (limited by keepWinnersRounds if present)
+                var winnersMatches = BuildWinnersBracket(tournamentId, stage, slots, ct, keepWinnersRounds);
 
-                // 3. Tạo Finals bracket
-                var finalsMatches = BuildFinalsBracket(tournamentId, stage, ct);
+                // 2. Determine necessary losers rounds (based on winners kept)
+                var losersMatches = new List<Match>();
+                if (stage.AdvanceCount.HasValue && stage.AdvanceCount.Value > 0)
+                {
+                    // derive which losers rounds are needed by inspecting mapping targets
+                    var pattern = GetLosersPattern(bracketSize);
+                    var totalLosersRounds = pattern.Length;
+                    var maxNeededLosersRound = 0;
+                    var keep = keepWinnersRounds ?? (int)Math.Log2(bracketSize);
+                    for (int wr = 1; wr <= Math.Max(keep, 0); wr++)
+                    {
+                        var trg = DetermineTargetLosersRound(wr, totalLosersRounds);
+                        if (trg > maxNeededLosersRound) maxNeededLosersRound = trg;
+                    }
+
+                    if (maxNeededLosersRound > 0)
+                    {
+                        // Determine exact losers rounds that winners will feed into (may be non-contiguous)
+                        var targetRounds = new SortedSet<int>();
+                        for (int wr = 1; wr <= Math.Max(keep, 0); wr++)
+                        {
+                            var trg = DetermineTargetLosersRound(wr, totalLosersRounds);
+                            if (trg > 0) targetRounds.Add(trg);
+                        }
+
+                        if (targetRounds.Count > 0)
+                        {
+                            losersMatches = BuildLosersBracketSelective(tournamentId, stage, bracketSize, ct, targetRounds.ToList());
+                        }
+                    }
+                }
+
+                // 3. Create finals only when this is a single-stage bracket (no AdvanceCount)
+                // and we kept all winners rounds (i.e., champion path exists). For multi-stage
+                // Stage 1 we should NOT create the grand-final here because Stage 2 will be
+                // responsible for its own finals.
+                List<Match> finalsMatches = new List<Match>();
+                if (!stage.AdvanceCount.HasValue && (!keepWinnersRounds.HasValue || keepWinnersRounds.Value == (int)Math.Log2(bracketSize)))
+                {
+                    finalsMatches = BuildFinalsBracket(tournamentId, stage, ct);
+                }
 
                 // 4. Map NextWinner/NextLoser relationships
                 MapDoubleEliminationFlow(winnersMatches, losersMatches, finalsMatches);
@@ -2199,6 +2582,12 @@ namespace PoolMate.Api.Services
 
         private List<Match> BuildWinnersBracket(int tournamentId, TournamentStage stage, List<PlayerSeed?> slots, CancellationToken ct)
         {
+            // default: build all rounds
+            return BuildWinnersBracket(tournamentId, stage, slots, ct, keepRounds: null);
+        }
+
+        private List<Match> BuildWinnersBracket(int tournamentId, TournamentStage stage, List<PlayerSeed?> slots, CancellationToken ct, int? keepRounds)
+        {
             int n = slots.Count;
             int roundNo = 1;
             int matches = n / 2;
@@ -2208,6 +2597,8 @@ namespace PoolMate.Api.Services
 
             while (matches > 0)
             {
+                if (keepRounds.HasValue && roundNo > keepRounds.Value)
+                    break;
                 for (int pos = 1; pos <= matches; pos++)
                 {
                     PlayerSeed? p1 = null;
@@ -2243,7 +2634,7 @@ namespace PoolMate.Api.Services
             return created;
         }
 
-        private List<Match> BuildLosersBracket(int tournamentId, TournamentStage stage, int bracketSize, CancellationToken ct)
+        private List<Match> BuildLosersBracket(int tournamentId, TournamentStage stage, int bracketSize, CancellationToken ct, int? maxRound = null)
         {
             var losersMatches = new List<Match>();
             var pattern = GetLosersPattern(bracketSize);
@@ -2254,8 +2645,50 @@ namespace PoolMate.Api.Services
 
             for (int round = 1; round <= losersRounds; round++)
             {
+                if (maxRound.HasValue && round > maxRound.Value)
+                    break;
+                // Note: caller may limit how many losers rounds are necessary by creating
+                // only the necessary winners rounds first and determining the target losers rounds.
                 int matchesInRound = pattern[round - 1];
 
+                for (int pos = 1; pos <= matchesInRound; pos++)
+                {
+                    losersMatches.Add(new Match
+                    {
+                        TournamentId = tournamentId,
+                        StageId = stage.Id,
+                        Bracket = BracketSide.Losers,
+                        RoundNo = round,
+                        PositionInRound = pos,
+                        Status = MatchStatus.NotStarted
+                    });
+                }
+            }
+
+            _db.Matches.AddRange(losersMatches);
+            _db.SaveChanges();
+            return losersMatches;
+        }
+
+        // Build only the specified losers rounds (round numbers correspond to the
+        // pattern indices returned by GetLosersPattern). This allows creating
+        // non-contiguous losers rounds such as {1,2,4} when winners feed into
+        // those specific rounds only.
+        private List<Match> BuildLosersBracketSelective(int tournamentId, TournamentStage stage, int bracketSize, CancellationToken ct, List<int> roundsToCreate)
+        {
+            var losersMatches = new List<Match>();
+            var pattern = GetLosersPattern(bracketSize);
+            var losersRounds = pattern.Length;
+
+            if (roundsToCreate == null || roundsToCreate.Count == 0)
+                return losersMatches;
+
+            foreach (var round in roundsToCreate.OrderBy(r => r))
+            {
+                if (round < 1 || round > losersRounds)
+                    continue;
+
+                int matchesInRound = pattern[round - 1];
                 for (int pos = 1; pos <= matchesInRound; pos++)
                 {
                     losersMatches.Add(new Match
@@ -2300,11 +2733,14 @@ namespace PoolMate.Api.Services
             // 1. Map Winners internal flow
             MapWinnersBracketFlow(winnersMatches);
 
-            // 2. Map Losers internal flow  
-            MapLosersBracketFlow(losersMatches);
-
-            // 3. Map Winners to Losers flow
+            // 2. Map Winners to Losers flow (do this before mapping losers internal flow)
+            // so that loser-slot sources are allocated first. This avoids a situation
+            // where the losers internal mapping fills all slots with WinnerOf sources
+            // and leaves no slot available for LoserOf assignments.
             MapWinnersToLosersFlow(winnersMatches, losersMatches);
+
+            // 3. Map Losers internal flow
+            MapLosersBracketFlow(losersMatches);
 
             // 4. Map to Finals
             MapFinalsConnections(winnersMatches, losersMatches, finalsMatches);
@@ -2524,7 +2960,7 @@ namespace PoolMate.Api.Services
                     FargoRating = tp.SkillLevel
                 }, ct);
 
-            // Assign players to slots
+            // Assign players to slots using the explicit slot positions the client provided
             foreach (var assignment in assignments)
             {
                 if (assignment.SlotPosition >= 0 && assignment.SlotPosition < bracketSize)
@@ -2576,6 +3012,71 @@ namespace PoolMate.Api.Services
             throw new InvalidOperationException($"No available slot for loser of match {sourceMatchId} in match {match.Id}.");
         }
 
+        // Recursively resolve a textual projection for a match slot.
+        // slotIndex: 1 or 2
+        private string? ResolveProjectedPlayerDescription(Match match, int slotIndex, Dictionary<int, Match> matchLookup, HashSet<int> visited)
+        {
+            if (match == null) return null;
+            if (visited.Contains(match.Id)) return null; // avoid cycles
+            visited.Add(match.Id);
+
+            // If slot already has an assigned player, return the display name
+            if (slotIndex == 1 && match.Player1Tp != null)
+                return match.Player1Tp.DisplayName;
+            if (slotIndex == 2 && match.Player2Tp != null)
+                return match.Player2Tp.DisplayName;
+
+            MatchSlotSourceType? sourceType = slotIndex == 1 ? match.Player1SourceType : match.Player2SourceType;
+            int? sourceMatchId = slotIndex == 1 ? match.Player1SourceMatchId : match.Player2SourceMatchId;
+
+            if (sourceType is null || sourceMatchId is null)
+                return null;
+
+            if (!matchLookup.TryGetValue(sourceMatchId.Value, out var src))
+                return null;
+
+            // If source match has seeded players, show their seed names combined
+            string DescribeMatchPlayers(Match m)
+            {
+                var p1 = m.Player1Tp != null ? m.Player1Tp.DisplayName : null;
+                var p2 = m.Player2Tp != null ? m.Player2Tp.DisplayName : null;
+                if (p1 != null && p2 != null)
+                    return $"({p1} vs {p2})";
+                if (p1 != null) return p1;
+                if (p2 != null) return p2;
+                return "(TBD)";
+            }
+
+            switch (sourceType)
+            {
+                case MatchSlotSourceType.WinnerOf:
+                    // If source match has both participants, show Winner(of p1 vs p2)
+                    if (src.Player1Tp != null || src.Player2Tp != null)
+                        return $"Winner {DescribeMatchPlayers(src)}";
+                    // else try to resolve recursively each side (use first non-null)
+                    var a = ResolveProjectedPlayerDescription(src, 1, matchLookup, visited);
+                    var b = ResolveProjectedPlayerDescription(src, 2, matchLookup, visited);
+                    if (a != null && b != null) return $"Winner ({a} vs {b})";
+                    if (a != null) return a;
+                    if (b != null) return b;
+                    return "(TBD)";
+
+                case MatchSlotSourceType.LoserOf:
+                    if (src.Player1Tp != null || src.Player2Tp != null)
+                        return $"Loser {DescribeMatchPlayers(src)}";
+                    // recursively attempt to describe losers
+                    var la = ResolveProjectedPlayerDescription(src, 1, matchLookup, visited);
+                    var lb = ResolveProjectedPlayerDescription(src, 2, matchLookup, visited);
+                    if (la != null && lb != null) return $"Loser ({la} vs {lb})";
+                    if (la != null) return la;
+                    if (lb != null) return lb;
+                    return "(TBD)";
+
+                default:
+                    return null;
+            }
+        }
+
         private bool TryCompleteMatchByBye(Match match, Dictionary<int, Match> matchDict)
         {
             if (match.Status != MatchStatus.NotStarted)
@@ -2599,6 +3100,62 @@ namespace PoolMate.Api.Services
             match.ScoreP2 = hasPlayer2 ? 0 : 0;
 
             PropagateResult(match, matchDict);
+            return true;
+        }
+
+        private async Task<bool> IsMatchManuallyEditable(Match match, CancellationToken ct)
+        {
+            if (match.Stage is null)
+            {
+                // load stage info
+                var stage = await _db.TournamentStages.FirstOrDefaultAsync(s => s.Id == match.StageId, ct);
+                if (stage is null) return true;
+                match.Stage = stage;
+            }
+
+            if (!match.Stage.AdvanceCount.HasValue)
+                return true;
+
+            var advance = match.Stage.AdvanceCount.Value;
+            if (advance <= 0) return true;
+
+            // determine bracket size by counting first-round winners matches
+            var firstRoundCount = await _db.Matches.CountAsync(m => m.StageId == match.StageId && m.Bracket == BracketSide.Winners && m.RoundNo == 1, ct);
+            if (firstRoundCount <= 0) return true;
+
+            var bracketSize = firstRoundCount * 2;
+            var fullWBRounds = (int)Math.Log2(bracketSize);
+            var advExp = (int)Math.Log2(advance);
+            int keep;
+            if (advance <= bracketSize / 4)
+                keep = fullWBRounds;
+            else
+                keep = Math.Min(Math.Max(advExp, 0), fullWBRounds);
+
+            if (match.Bracket == BracketSide.Winners)
+            {
+                return match.RoundNo <= keep;
+            }
+
+            if (match.Bracket == BracketSide.Finals)
+            {
+                // finals only exist when all winners rounds are kept
+                return keep == fullWBRounds;
+            }
+
+            if (match.Bracket == BracketSide.Losers)
+            {
+                var pattern = GetLosersPattern(bracketSize);
+                var totalLosersRounds = pattern.Length;
+                var maxNeeded = 0;
+                for (int wr = 1; wr <= Math.Max(keep, 0); wr++)
+                {
+                    var trg = DetermineTargetLosersRound(wr, totalLosersRounds);
+                    if (trg > maxNeeded) maxNeeded = trg;
+                }
+                return match.RoundNo <= maxNeeded;
+            }
+
             return true;
         }
 

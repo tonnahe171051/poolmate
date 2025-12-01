@@ -440,6 +440,26 @@ public class TournamentsController : ControllerBase
         return Ok(dto);
     }
 
+    [HttpGet("{id}/stages/{stageNo}/preview")]
+    public async Task<ActionResult<StagePreviewDto>> PreviewStage(int id, int stageNo, CancellationToken ct)
+    {
+        try
+        {
+            var dto = await _bracket.PreviewStageAsync(id, stageNo, ct);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Tournament not found." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    
+
     [HttpPost("{id}/bracket/create")]
     public async Task<IActionResult> CreateBracket(
         int id,
@@ -482,15 +502,45 @@ public class TournamentsController : ControllerBase
     {
         try
         {
-            if (filterType.HasValue)
-            {
-                var filter = new BracketFilterRequest { FilterType = filterType.Value };
-                var filtered = await _bracket.GetFilteredAsync(id, filter, ct);
-                return Ok(filtered);
-            }
-
+            // Remove filter-based path; always return full bracket here.
             var bracket = await _bracket.GetAsync(id, ct);
             return Ok(bracket);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Tournament not found." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("{id}/bracket/winners")]
+    public async Task<ActionResult<BracketDto>> GetBracketWinners(int id, CancellationToken ct)
+    {
+        try
+        {
+            var dto = await _bracket.GetWinnersSideAsync(id, ct);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Tournament not found." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("{id}/bracket/losers")]
+    public async Task<ActionResult<BracketDto>> GetBracketLosers(int id, CancellationToken ct)
+    {
+        try
+        {
+            var dto = await _bracket.GetLosersSideAsync(id, ct);
+            return Ok(dto);
         }
         catch (KeyNotFoundException)
         {

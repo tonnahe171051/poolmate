@@ -107,6 +107,10 @@ public class TournamentService : ITournamentService
             bracketType = m.Stage1Type ?? m.BracketType ?? BracketType.DoubleElimination;
             bracketOrdering = m.Stage1Ordering ?? m.BracketOrdering ?? BracketOrdering.Random;
             stage2Ordering = m.Stage2Ordering ?? BracketOrdering.Random;
+
+            // Validation: Single Elimination is not valid as Stage1 for multi-stage
+            if (bracketType == BracketType.SingleElimination)
+                throw new InvalidOperationException("Single Elimination is not compatible with multi-stage tournaments. Choose Double Elimination for Stage 1.");
         }
         else
         {
@@ -204,6 +208,14 @@ public class TournamentService : ITournamentService
 
             // ✅ DETERMINE MULTI-STAGE STATUS
             var willBeMulti = m.IsMultiStage ?? t.IsMultiStage;
+
+            // Additional validation: if willBeMulti then Stage1 must not be SingleElimination
+            if (willBeMulti)
+            {
+                var effectiveStage1Type = m.Stage1Type ?? m.BracketType ?? t.BracketType;
+                if (effectiveStage1Type == BracketType.SingleElimination)
+                    throw new InvalidOperationException("Single Elimination cannot be used as Stage 1 for multi-stage tournaments.");
+            }
 
             // ✅ VALIDATION: Khi có Stage2 settings nhưng sẽ là single-stage
             if (!willBeMulti)
