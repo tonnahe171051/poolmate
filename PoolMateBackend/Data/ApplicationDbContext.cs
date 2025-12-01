@@ -54,6 +54,15 @@ namespace PoolMate.Api.Data
             pt.Property(x => x.Name).HasMaxLength(200).IsRequired();
             pt.Property(x => x.PercentJson).IsRequired();
             pt.HasIndex(x => new { x.MinPlayers, x.MaxPlayers, x.Places });
+            
+            // Configure relationship with Owner
+            pt.HasOne(x => x.OwnerUser)
+              .WithMany()
+              .HasForeignKey(x => x.OwnerUserId)
+              .OnDelete(DeleteBehavior.Cascade); // Delete Organizer -> Delete their templates
+              
+            // Index for faster lookups by owner
+            pt.HasIndex(x => x.OwnerUserId);
 
             // ===== Tournament =====
             var t = builder.Entity<Tournament>();

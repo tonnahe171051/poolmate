@@ -1,29 +1,30 @@
 using PoolMate.Api.Dtos.Auth;
 using Microsoft.EntityFrameworkCore;
-using PoolMate.Api.Dtos.Admin.Payout;
 using PoolMate.Api.Dtos.Response;
 using System.Text.Json;
 using PoolMate.Api.Data;
+using PoolMate.Api.Dtos.Payout;
 using PoolMate.Api.Models;
 
 namespace PoolMate.Api.Services;
 
-public class AdminPayoutService : IAdminPayoutService
+public class PayoutService : IPayoutService
 {
     private readonly ApplicationDbContext _db;
-    private readonly ILogger<AdminPayoutService> _logger;
+    private readonly ILogger<PayoutService> _logger;
 
-    public AdminPayoutService(ApplicationDbContext db, ILogger<AdminPayoutService> logger)
+    public PayoutService(ApplicationDbContext db, ILogger<PayoutService> logger)
     {
         _db = db;
         _logger = logger;
     }
 
-    public async Task<List<PayoutTemplateDto>> GetTemplatesAsync(CancellationToken ct = default)
+    public async Task<List<PayoutTemplateDto>> GetTemplatesAsync(string userId, CancellationToken ct = default)
     {
-        // 1. Truy vấn Database (Lấy tất cả)
+        // 1. Truy vấn Database (Lấy templates của user hiện tại)
         var entities = await _db.PayoutTemplates
             .AsNoTracking()
+            .Where(x => x.OwnerUserId == userId) 
             .OrderBy(x => x.MinPlayers)
             .ThenBy(x => x.Places)
             .ToListAsync(ct);
@@ -58,11 +59,11 @@ public class AdminPayoutService : IAdminPayoutService
         return result;
     }
 
-    public async Task<PayoutTemplateDto?> GetTemplateByIdAsync(int id, CancellationToken ct = default)
+    public async Task<PayoutTemplateDto?> GetTemplateByIdAsync(int id, string userId, CancellationToken ct = default)
     {
         var entity = await _db.PayoutTemplates
             .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Id == id, ct);
+            .FirstOrDefaultAsync(x => x.Id == id && x.OwnerUserId == userId, ct);
         if (entity == null) return null;
 
         List<RankPercentDto> distribution;
@@ -87,7 +88,7 @@ public class AdminPayoutService : IAdminPayoutService
         };
     }
 
-    public async Task<PayoutTemplateDto> CreateTemplateAsync(CreatePayoutTemplateDto dto,
+    public async Task<PayoutTemplateDto> CreateTemplateAsync(string userId, CreatePayoutTemplateDto dto,
         CancellationToken ct = default)
     {
         // 1. Validate Logic (Business Rules)
@@ -110,6 +111,7 @@ public class AdminPayoutService : IAdminPayoutService
         // 2. Map DTO -> Entity
         var entity = new PayoutTemplate
         {
+            OwnerUserId = userId, // GÁN CHỦ SỞ HỮU
             Name = dto.Name.Trim(),
             MinPlayers = dto.MinPlayers,
             MaxPlayers = dto.MaxPlayers,
@@ -131,11 +133,11 @@ public class AdminPayoutService : IAdminPayoutService
         };
     }
 
-    public async Task<PayoutTemplateDto?> UpdateTemplateAsync(int id, CreatePayoutTemplateDto dto,
+    public async Task<PayoutTemplateDto?> UpdateTemplateAsync(int id, string userId, CreatePayoutTemplateDto dto,
         CancellationToken ct = default)
     {
-        // 1. Tìm Template trong DB
-        var entity = await _db.PayoutTemplates.FirstOrDefaultAsync(x => x.Id == id, ct);
+        // 1. Tìm Template trong DB và check ownership
+        var entity = await _db.PayoutTemplates.FirstOrDefaultAsync(x => x.Id == id && x.OwnerUserId == userId, ct);
         if (entity == null) return null;
         // 2. Validate Logic (Business Rules) - Giống hệt hàm Create
         // Rule A: Min < Max
@@ -175,24 +177,19 @@ public class AdminPayoutService : IAdminPayoutService
         };
     }
 
-    public async Task<Response> DeleteTemplateAsync(int id, CancellationToken ct = default)
+    public async Task<Response> DeleteTemplateAsync(int id, string userId, CancellationToken ct = default)
     {
-        // 1. Tìm Template
-        var entity = await _db.PayoutTemplates.FindAsync(new object[] { id }, ct);
+        var entity = await _db.PayoutTemplates.FirstOrDefaultAsync(x => x.Id == id && x.OwnerUserId == userId, ct);
         if (entity == null)
         {
-            return Response.Error("Payout template not found");
+            return Response.Error("Payout template not found or you don't have permission to delete it");
         }
-
-        // 2. Quan trọng: Kiểm tra ràng buộc dữ liệu (Constraint Check)
         var isInUse = await _db.Tournaments.AnyAsync(t => t.PayoutTemplateId == id, ct);
         if (isInUse)
         {
             return Response.Error(
                 "Cannot delete this template because it is currently assigned to one or more tournaments. Please change the tournaments' settings first.");
         }
-
-        // 3. Xóa an toàn
         _db.PayoutTemplates.Remove(entity);
         await _db.SaveChangesAsync(ct);
 
@@ -203,7 +200,6 @@ public class AdminPayoutService : IAdminPayoutService
         PayoutSimulationRequestDto request,
         CancellationToken ct = default)
     {
-        // 1. Xác định công thức chia (Distribution) cần dùng
         List<RankPercentDto> distribution;
         if (request.TemplateId.HasValue)
         {

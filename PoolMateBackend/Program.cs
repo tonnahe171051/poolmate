@@ -220,7 +220,7 @@ builder.Services.AddScoped<IBracketService, BracketService>();
 builder.Services.AddScoped<IAdminUserService, AdminUserService>();
 builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
 builder.Services.AddScoped<IPlayerProfileService, PlayerProfileService>();
-builder.Services.AddScoped<IAdminPayoutService, AdminPayoutService>(); 
+builder.Services.AddScoped<IPayoutService, PayoutService>(); 
 builder.Services.AddScoped<IOrganizerDashboardService, OrganizerDashboardService>();
 
 // Cloudinary

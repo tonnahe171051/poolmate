@@ -1,4 +1,4 @@
-namespace PoolMate.Api.Dtos.Admin.Payout;
+namespace PoolMate.Api.Dtos.Payout;
 using System.ComponentModel.DataAnnotations;
 
 public class CreatePayoutTemplateDto

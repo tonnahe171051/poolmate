@@ -1,4 +1,4 @@
-namespace PoolMate.Api.Dtos.Admin.Payout;
+namespace PoolMate.Api.Dtos.Payout;
 
 public class PayoutSimulationRequestDto
 {

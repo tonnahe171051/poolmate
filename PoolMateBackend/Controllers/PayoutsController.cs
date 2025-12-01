@@ -1,24 +1,25 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
-using PoolMate.Api.Dtos.Admin.Payout;
+using PoolMate.Api.Dtos.Payout;
 using PoolMate.Api.Dtos.Response;
 using PoolMate.Api.Services;
 using PoolMate.Api.Common;
 using PoolMate.Api.Dtos.Auth;
+using System.Security.Claims;
 
 namespace PoolMate.Api.Controllers;
 
 [ApiController]
-[Route("api/admin/payouts")]
-[Authorize(Roles = UserRoles.ADMIN)]
-public class AdminPayoutsController : ControllerBase
+[Route("api/payouts")]
+[Authorize(Roles = UserRoles.ORGANIZER)]
+public class PayoutsController : ControllerBase
 {
-    private readonly IAdminPayoutService _service;
-    private readonly ILogger<AdminPayoutsController> _logger;
+    private readonly IPayoutService _service;
+    private readonly ILogger<PayoutsController> _logger;
 
-    public AdminPayoutsController(
-        IAdminPayoutService service,
-        ILogger<AdminPayoutsController> logger)
+    public PayoutsController(
+        IPayoutService service,
+        ILogger<PayoutsController> logger)
     {
         _service = service;
         _logger = logger;
@@ -40,7 +41,8 @@ public class AdminPayoutsController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail(400, "Validation failed", errors));
             }
 
-            var result = await _service.CreateTemplateAsync(dto, ct);
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var result = await _service.CreateTemplateAsync(userId, dto, ct);
             return CreatedAtAction(
                 nameof(GetTemplateById),
                 new { id = result.Id },
@@ -68,7 +70,8 @@ public class AdminPayoutsController : ControllerBase
     {
         try
         {
-            var result = await _service.GetTemplateByIdAsync(id, ct);
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var result = await _service.GetTemplateByIdAsync(id, userId, ct);
             if (result == null)
             {
                 return NotFound(ApiResponse<object>.Fail(404, "Payout template not found"));
@@ -85,11 +88,19 @@ public class AdminPayoutsController : ControllerBase
 
     [HttpGet("templates")]
     [ProducesResponseType(typeof(ApiResponse<List<PayoutTemplateDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)] 
     public async Task<ActionResult<ApiResponse<List<PayoutTemplateDto>>>> GetTemplates(CancellationToken ct)
     {
         try
         {
-            var results = await _service.GetTemplatesAsync(ct);
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var results = await _service.GetTemplatesAsync(userId, ct);
+            if (results.Count == 0)
+            {
+                return Ok(ApiResponse<List<PayoutTemplateDto>>.Ok(results,
+                    "You don't have any payout templates yet. Please create one."));
+            }
+
             return Ok(ApiResponse<List<PayoutTemplateDto>>.Ok(results));
         }
         catch (Exception ex)
@@ -118,10 +129,12 @@ public class AdminPayoutsController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail(400, "Validation failed", errors));
             }
 
-            var result = await _service.UpdateTemplateAsync(id, dto, ct);
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var result = await _service.UpdateTemplateAsync(id, userId, dto, ct);
             if (result == null)
             {
-                return NotFound(ApiResponse<object>.Fail(404, "Payout template not found"));
+                return NotFound(ApiResponse<object>.Fail(404,
+                    "Payout template not found or you don't have permission"));
             }
 
             return Ok(ApiResponse<PayoutTemplateDto>.Ok(result, "Payout template updated successfully"));
@@ -146,8 +159,8 @@ public class AdminPayoutsController : ControllerBase
     {
         try
         {
-            var response = await _service.DeleteTemplateAsync(id, ct);
-
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var response = await _service.DeleteTemplateAsync(id, userId, ct);
             if (!response.Success)
             {
                 return BadRequest(ApiResponse<object>.Fail(400, response.Message));
