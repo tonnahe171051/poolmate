@@ -72,6 +72,51 @@ public class PlayerProfileService : IPlayerProfileService
         };
     }
 
+    public async Task UpdatePlayerFromUserAsync(ApplicationUser user, CancellationToken ct = default)
+    {
+        // 1. Tìm hồ sơ Player của User này
+        var player = await _db.Players
+            .FirstOrDefaultAsync(p => p.UserId == user.Id, ct);
+
+        // Nếu chưa có hồ sơ Player thì bỏ qua, không cần sync
+        if (player == null) return;
+
+        // 2. Map dữ liệu từ User -> Player
+        
+        // Xử lý FullName (Giống logic lúc Create)
+        string fullNameMap = $"{user.FirstName} {user.LastName}".Trim();
+        if (string.IsNullOrWhiteSpace(fullNameMap))
+        {
+            fullNameMap = user.UserName ?? "Unknown Player";
+        }
+
+        // Cập nhật các trường
+        player.FullName = fullNameMap;
+        player.Nickname = user.Nickname;
+        player.Email = user.Email;
+        player.Phone = user.PhoneNumber;
+        player.Country = user.Country;
+        player.City = user.City;
+        
+        // Cập nhật Slug nếu tên thay đổi
+        string baseSlug = SlugHelper.GenerateSlug(fullNameMap);
+        if (player.Slug != baseSlug)
+        {
+            // Kiểm tra xem slug mới đã tồn tại chưa
+            string finalSlug = baseSlug;
+            int count = 1;
+            while (await _db.Players.AsNoTracking().AnyAsync(p => p.Slug == finalSlug && p.Id != player.Id, ct))
+            {
+                finalSlug = $"{baseSlug}-{count}";
+                count++;
+            }
+            player.Slug = finalSlug;
+        }
+
+        // 3. Lưu thay đổi
+        await _db.SaveChangesAsync(ct);
+    }
+
     public async Task<List<PlayerProfileDetailDto>> GetMyPlayerProfilesAsync(
         string userId,
         CancellationToken ct = default)
@@ -367,13 +412,9 @@ public class PlayerProfileService : IPlayerProfileService
         int pageSize = 20,
         CancellationToken ct = default)
     {
-        // Tái sử dụng logic từ GetMyTournamentsHistoryAsync
         return await GetMyTournamentsHistoryAsync(playerId, pageIndex, pageSize, ct);
     }
-
-    /// <summary>
-    /// Lấy danh sách tất cả players với phân trang và lọc
-    /// </summary>
+    
     public async Task<PagingList<PlayerListDto>> GetAllPlayersAsync(
         PlayerListFilterDto filter,
         CancellationToken ct = default)
