@@ -10,6 +10,8 @@ public interface IPlayerProfileService
         string userId,
         ApplicationUser user,
         CancellationToken ct = default);
+    
+    Task UpdatePlayerFromUserAsync(ApplicationUser user, CancellationToken ct = default);
 
     Task<List<PlayerProfileDetailDto>> GetMyPlayerProfilesAsync(
         string userId,
@@ -30,8 +32,7 @@ public interface IPlayerProfileService
         int pageIndex = 1,
         int pageSize = 20,
         CancellationToken ct = default);
-
-    // Public APIs - Anyone can access
+    
     Task<PagingList<MatchHistoryDto>> GetMatchHistoryByPlayerIdAsync(
         int playerId,
         int pageIndex = 1,

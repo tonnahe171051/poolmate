@@ -199,9 +199,7 @@ public class PlayerProfileController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Lấy lịch sử các giải đấu mà player đã tham gia
-    /// </summary>
+
     [HttpGet("my-tournaments")]
     [ProducesResponseType(typeof(ApiResponse<PagingList<PlayerTournamentDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
@@ -240,11 +238,7 @@ public class PlayerProfileController : ControllerBase
         }
     }
 
-    // ========== PUBLIC ENDPOINTS - Anyone can access ==========
 
-    /// <summary>
-    /// Lấy match history của player theo ID (Public - AllowAnonymous)
-    /// </summary>
     [HttpGet("{playerId}/matches")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(ApiResponse<PagingList<MatchHistoryDto>>), StatusCodes.Status200OK)]
@@ -282,9 +276,7 @@ public class PlayerProfileController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Lấy tournament history của player theo ID (Public - AllowAnonymous)
-    /// </summary>
+
     [HttpGet("{playerId}/tournaments")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(ApiResponse<PagingList<PlayerTournamentDto>>), StatusCodes.Status200OK)]

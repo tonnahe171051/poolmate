@@ -751,15 +751,27 @@ public class TournamentService : ITournamentService
             ct);
         if (tp is null) return null;
 
+        // Generate unique slug from DisplayName
+        string baseSlug = SlugHelper.GenerateSlug(tp.DisplayName);
+        string finalSlug = baseSlug;
+        int count = 1;
+        while (await _db.Players.AsNoTracking().AnyAsync(p => p.Slug == finalSlug, ct))
+        {
+            finalSlug = $"{baseSlug}-{count}";
+            count++;
+        }
+
         // tạo Player mới từ snapshot
         var p = new Player
         {
             FullName = tp.DisplayName,
+            Slug = finalSlug,
             Email = tp.Email,
             Phone = tp.Phone,
             Country = tp.Country,
             City = tp.City,
-            SkillLevel = tp.SkillLevel
+            SkillLevel = tp.SkillLevel,
+            CreatedAt = DateTime.UtcNow
         };
 
         _db.Set<Player>().Add(p);

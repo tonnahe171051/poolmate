@@ -10,11 +10,16 @@ namespace PoolMate.Api.Services
     {
         private readonly UserManager<ApplicationUser> _users;
         private readonly ICloudinaryService _cloud;
+        private readonly IPlayerProfileService _playerService;
 
-        public ProfileService(UserManager<ApplicationUser> users, ICloudinaryService cloud)
+        public ProfileService(
+            UserManager<ApplicationUser> users, 
+            ICloudinaryService cloud,
+            IPlayerProfileService playerService)
         {
             _users = users;
             _cloud = cloud;
+            _playerService = playerService;
         }
 
         public async Task<Response> MeAsync(string userId, CancellationToken ct)
@@ -67,6 +72,9 @@ namespace PoolMate.Api.Services
 
             var res = await _users.UpdateAsync(u);
             if (!res.Succeeded) return Response.Error(string.Join("; ", res.Errors.Select(e => e.Description)));
+
+            // 👇 Đồng bộ dữ liệu sang Player Profile sau khi update User thành công
+            await _playerService.UpdatePlayerFromUserAsync(u, ct);
 
             return Response.Ok(new
             {

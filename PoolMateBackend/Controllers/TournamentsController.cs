@@ -227,6 +227,7 @@ public class TournamentsController : ControllerBase
         return Ok(new { playerId });
     }
 
+    [AllowAnonymous]
     [HttpGet("{id}/players")]
     public async Task<ActionResult<List<TournamentPlayerListDto>>> GetTournamentPlayers(
         int id,
@@ -383,6 +384,7 @@ public class TournamentsController : ControllerBase
         }
     }
 
+    [AllowAnonymous]
     [HttpGet("{id}/tables")]
     public async Task<ActionResult<List<TournamentTableDto>>> GetTournamentTables(
         int id,
@@ -504,6 +506,7 @@ public class TournamentsController : ControllerBase
         }
     }
 
+    [AllowAnonymous]
     [HttpGet("{id}/bracket")]
     public async Task<ActionResult<BracketDto>> GetBracket(
         int id,
@@ -606,6 +609,7 @@ public class TournamentsController : ControllerBase
         return Ok(lines);
     }
 
+    [AllowAnonymous]
     [HttpGet("{tournamentId}/players/stats")]
     public async Task<ActionResult<IReadOnlyList<TournamentPlayerStatsDto>>> GetPlayerStats(
         int tournamentId,
