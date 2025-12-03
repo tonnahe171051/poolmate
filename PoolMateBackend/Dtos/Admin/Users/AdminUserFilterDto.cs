@@ -18,6 +18,7 @@ public class AdminUserFilterDto
     public bool? IsLockedOut { get; set; } // true = đang bị lock, false = không bị lock
     public string? Country { get; set; } // Filter theo country
     public string? City { get; set; } // Filter theo city
+    public string? Role { get; set; } // Filter theo role (Admin, Organizer, User)
     
     // Date range filters
     public DateTime? CreatedFrom { get; set; } // Từ ngày (user created)

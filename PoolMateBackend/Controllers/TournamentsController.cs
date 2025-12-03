@@ -16,6 +16,7 @@ public class TournamentsController : ControllerBase
 {
     private readonly ITournamentService _svc;
     private readonly IBracketService _bracket;
+
     public TournamentsController(ITournamentService svc, IBracketService bracket)
     {
         _svc = svc;
@@ -40,11 +41,11 @@ public class TournamentsController : ControllerBase
 
     [HttpGet("my-tournaments")]
     public async Task<ActionResult<PagingList<UserTournamentListDto>>> GetTournamentsByUser(
-    [FromQuery] string? searchName = null,
-    [FromQuery] TournamentStatus? status = null,
-    [FromQuery] int pageIndex = 1,
-    [FromQuery] int pageSize = 10,
-    CancellationToken ct = default)
+        [FromQuery] string? searchName = null,
+        [FromQuery] TournamentStatus? status = null,
+        [FromQuery] int pageIndex = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken ct = default)
     {
         if (pageIndex < 1) pageIndex = 1;
         if (pageSize < 1 || pageSize > 100) pageSize = 10;
@@ -94,12 +95,17 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("payout-templates")]
-    [AllowAnonymous]
     public async Task<ActionResult<List<PayoutTemplateDto>>> GetPayoutTemplates(CancellationToken ct)
     {
         try
         {
-            var data = await _svc.GetPayoutTemplatesAsync(ct);
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return Unauthorized(new { message = "User not authenticated" });
+            }
+            var data = await _svc.GetPayoutTemplatesAsync(userId, ct);
+
             return Ok(data);
         }
         catch (InvalidOperationException ex)
@@ -127,9 +133,9 @@ public class TournamentsController : ControllerBase
 
     [HttpPost("{id}/players")]
     public async Task<IActionResult> AddPlayer(
-    int id,
-    [FromBody] AddTournamentPlayerModel model,
-    CancellationToken ct)
+        int id,
+        [FromBody] AddTournamentPlayerModel model,
+        CancellationToken ct)
     {
         try
         {
@@ -140,7 +146,8 @@ public class TournamentsController : ControllerBase
 
                 var phone = model.Phone.Trim();
                 if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
-                    return BadRequest(new { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+                    return BadRequest(new
+                        { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
 
                 model.Phone = phone;
             }
@@ -163,9 +170,9 @@ public class TournamentsController : ControllerBase
 
     [HttpPost("{id}/players/bulk-lines")]
     public async Task<IActionResult> BulkAddPlayersPerLine(
-    int id,
-    [FromBody] AddTournamentPlayersPerLineModel model,
-    CancellationToken ct)
+        int id,
+        [FromBody] AddTournamentPlayersPerLineModel model,
+        CancellationToken ct)
     {
         try
         {
@@ -184,14 +191,16 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("players/search")]
-    public async Task<IActionResult> SearchPlayers([FromQuery] string q, [FromQuery] int limit = 10, CancellationToken ct = default)
+    public async Task<IActionResult> SearchPlayers([FromQuery] string q, [FromQuery] int limit = 10,
+        CancellationToken ct = default)
     {
         var items = await _svc.SearchPlayersAsync(q, limit, ct);
         return Ok(items);
     }
 
     [HttpPost("{tournamentId}/players/{tpId}/link")]
-    public async Task<IActionResult> LinkPlayer(int tournamentId, int tpId, [FromBody] LinkPlayerRequest m, CancellationToken ct)
+    public async Task<IActionResult> LinkPlayer(int tournamentId, int tpId, [FromBody] LinkPlayerRequest m,
+        CancellationToken ct)
     {
         var uid = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var ok = await _svc.LinkTournamentPlayerAsync(tournamentId, tpId, uid, m, ct);
@@ -218,11 +227,12 @@ public class TournamentsController : ControllerBase
         return Ok(new { playerId });
     }
 
+    [AllowAnonymous]
     [HttpGet("{id}/players")]
     public async Task<ActionResult<List<TournamentPlayerListDto>>> GetTournamentPlayers(
-    int id,
-    [FromQuery] string? searchName = null,
-    CancellationToken ct = default)
+        int id,
+        [FromQuery] string? searchName = null,
+        CancellationToken ct = default)
     {
         var players = await _svc.GetTournamentPlayersAsync(id, searchName, ct);
         return Ok(players);
@@ -230,10 +240,10 @@ public class TournamentsController : ControllerBase
 
     [HttpPut("{tournamentId}/players/{tpId}")]
     public async Task<IActionResult> UpdateTournamentPlayer(
-    int tournamentId,
-    int tpId,
-    [FromBody] UpdateTournamentPlayerModel model,
-    CancellationToken ct)
+        int tournamentId,
+        int tpId,
+        [FromBody] UpdateTournamentPlayerModel model,
+        CancellationToken ct)
     {
         try
         {
@@ -244,7 +254,8 @@ public class TournamentsController : ControllerBase
 
                 var phone = model.Phone.Trim();
                 if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
-                    return BadRequest(new { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+                    return BadRequest(new
+                        { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
 
                 model.Phone = phone;
             }
@@ -291,9 +302,9 @@ public class TournamentsController : ControllerBase
 
     [HttpPost("{id}/tables/bulk")]
     public async Task<IActionResult> AddMultipleTables(
-    int id,
-    [FromBody] AddMultipleTournamentTablesModel model,
-    CancellationToken ct)
+        int id,
+        [FromBody] AddMultipleTournamentTablesModel model,
+        CancellationToken ct)
     {
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
@@ -373,6 +384,7 @@ public class TournamentsController : ControllerBase
         }
     }
 
+    [AllowAnonymous]
     [HttpGet("{id}/tables")]
     public async Task<ActionResult<List<TournamentTableDto>>> GetTournamentTables(
         int id,
@@ -384,9 +396,9 @@ public class TournamentsController : ControllerBase
 
     [HttpDelete("{tournamentId}/players")]
     public async Task<IActionResult> DeletePlayers(
-    int tournamentId,
-    [FromBody] DeletePlayersModel model,
-    CancellationToken ct)
+        int tournamentId,
+        [FromBody] DeletePlayersModel model,
+        CancellationToken ct)
     {
         try
         {
@@ -458,7 +470,6 @@ public class TournamentsController : ControllerBase
         }
     }
 
-    
 
     [HttpPost("{id}/bracket/create")]
     public async Task<IActionResult> CreateBracket(
@@ -494,6 +505,8 @@ public class TournamentsController : ControllerBase
             return BadRequest(new { message = ex.Message });
         }
     }
+
+    [AllowAnonymous]
     [HttpGet("{id}/bracket")]
     public async Task<ActionResult<BracketDto>> GetBracket(
         int id,
@@ -575,7 +588,8 @@ public class TournamentsController : ControllerBase
     {
         try
         {
-            var result = await _bracket.CompleteStageAsync(tournamentId, stageNo, request ?? new CompleteStageRequest(), ct);
+            var result =
+                await _bracket.CompleteStageAsync(tournamentId, stageNo, request ?? new CompleteStageRequest(), ct);
             return Ok(result);
         }
         catch (KeyNotFoundException)
@@ -595,6 +609,7 @@ public class TournamentsController : ControllerBase
         return Ok(lines);
     }
 
+    [AllowAnonymous]
     [HttpGet("{tournamentId}/players/stats")]
     public async Task<ActionResult<IReadOnlyList<TournamentPlayerStatsDto>>> GetPlayerStats(
         int tournamentId,

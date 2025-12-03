@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using PoolMate.Api.Data;
 
@@ -11,9 +12,11 @@ using PoolMate.Api.Data;
 namespace PoolMate.Api.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251129093608_AddPlayerSlug")]
+    partial class AddPlayerSlug
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -360,10 +363,6 @@ namespace PoolMate.Api.Data.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<string>("OwnerUserId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
                     b.Property<string>("PercentJson")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -372,8 +371,6 @@ namespace PoolMate.Api.Data.Migrations
                         .HasColumnType("int");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("OwnerUserId");
 
                     b.HasIndex("MinPlayers", "MaxPlayers", "Places");
 
@@ -908,17 +905,6 @@ namespace PoolMate.Api.Data.Migrations
                     b.Navigation("Tournament");
 
                     b.Navigation("WinnerTp");
-                });
-
-            modelBuilder.Entity("PoolMate.Api.Models.PayoutTemplate", b =>
-                {
-                    b.HasOne("PoolMate.Api.Models.ApplicationUser", "OwnerUser")
-                        .WithMany()
-                        .HasForeignKey("OwnerUserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("OwnerUser");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Player", b =>

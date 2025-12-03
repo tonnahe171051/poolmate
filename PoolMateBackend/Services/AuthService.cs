@@ -38,6 +38,11 @@ public class AuthService : IAuthService
         var user = await _users.FindByNameAsync(username);
         if (user is null)
             throw new InvalidOperationException("Invalid username or password.");
+        
+        if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow)
+        {
+            throw new InvalidOperationException("This account has been locked. Please contact administrator.");
+        }
 
         if (!await _users.CheckPasswordAsync(user, model.Password))
             throw new InvalidOperationException("Invalid username or password.");
@@ -51,6 +56,7 @@ public class AuthService : IAuthService
         {
             new(ClaimTypes.Name, user.UserName ?? string.Empty),
             new(ClaimTypes.NameIdentifier, user.Id),
+            new(ClaimTypes.Email, user.Email ?? string.Empty), 
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
         foreach (var r in userRoles) claims.Add(new Claim(ClaimTypes.Role, r));
