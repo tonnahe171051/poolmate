@@ -1,13 +1,7 @@
-﻿using PoolMate.Api.Models;
-
-namespace PoolMate.Api.Dtos.Tournament
+﻿namespace PoolMate.Api.Dtos.Tournament
 {
-    public class StagePreviewDto
+    // Backwards-compatible alias so any lingering references can deserialize StageDto format.
+    public class StagePreviewDto : StageDto
     {
-        public int StageNo { get; set; }
-        public BracketType Type { get; set; }
-        public BracketOrdering Ordering { get; set; }
-        public int BracketSize { get; set; }
-        public List<RoundPreviewDto> Rounds { get; set; } = new();
     }
 }
