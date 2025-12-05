@@ -4,13 +4,13 @@ using PoolMate.Api.Common;
 using PoolMate.Api.Dtos.Admin.Player;
 using PoolMate.Api.Services;
 using PoolMate.Api.Dtos.Response;
-using PoolMate.Api.Dtos.Admin.Player;
+using PoolMate.Api.Dtos.Auth;
 
 namespace PoolMate.Api.Controllers;
 
 [ApiController]
 [Route("api/admin/players")]
-[Authorize(Roles = "Admin")]
+[Authorize(Roles = UserRoles.ADMIN)]
 public class AdminPlayersController : ControllerBase
 {
     private readonly IAdminPlayerService _service;

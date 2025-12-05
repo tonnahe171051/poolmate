@@ -1,4 +1,4 @@
-﻿﻿using System.IdentityModel.Tokens.Jwt;
+﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Identity;
@@ -38,6 +38,11 @@ public class AuthService : IAuthService
         var user = await _users.FindByNameAsync(username);
         if (user is null)
             throw new InvalidOperationException("Invalid username or password.");
+        
+        if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow)
+        {
+            throw new InvalidOperationException("This account has been locked. Please contact administrator.");
+        }
 
         if (!await _users.CheckPasswordAsync(user, model.Password))
             throw new InvalidOperationException("Invalid username or password.");

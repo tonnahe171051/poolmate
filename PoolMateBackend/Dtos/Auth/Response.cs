@@ -1,4 +1,4 @@
-﻿﻿namespace PoolMate.Api.Dtos.Auth
+﻿namespace PoolMate.Api.Dtos.Auth
 {
     public class Response
     {

@@ -19,6 +19,9 @@ public class PlayerProfileDetailDto
 {
     public int Id { get; set; }
     public string FullName { get; set; } = default!;
+    
+    public string Slug { get; set; } = string.Empty; // Slug cho SEO-friendly URL
+    
     public string? Nickname { get; set; }
     public string? Email { get; set; }
     public string? Phone { get; set; }

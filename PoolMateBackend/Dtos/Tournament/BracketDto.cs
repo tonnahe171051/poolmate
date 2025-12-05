@@ -50,6 +50,11 @@ namespace PoolMate.Api.Dtos.Tournament
         public PlayerDto? Player2 { get; set; }
         public PlayerDto? Winner { get; set; }
 
+        // Helpful debug / UI-only projections: textual descriptions of the
+        // projected player(s) for an empty slot when source matches exist.
+        public string? ProjectedPlayer1 { get; set; }
+        public string? ProjectedPlayer2 { get; set; }
+
     public MatchSlotSourceType? Player1SourceType { get; set; }
     public int? Player1SourceMatchId { get; set; }
     public MatchSlotSourceType? Player2SourceType { get; set; }

@@ -2,9 +2,10 @@ namespace PoolMate.Api.Dtos.Dashboard;
 
 public class OrganizerActivityDto
 {
-    public string Time { get; set; } = default!;
+
+    public DateTime CreatedAt { get; set; }
     public string Message { get; set; } = default!;
-    public ActivityType Type { get; set; }
+    public string Type { get; set; } = default!; 
 }
 
 public enum ActivityType
@@ -15,4 +16,3 @@ public enum ActivityType
     TournamentEnded,
     PlayerStatusChanged
 }
-

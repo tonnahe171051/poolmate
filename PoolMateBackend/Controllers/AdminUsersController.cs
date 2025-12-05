@@ -1,8 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PoolMate.Api.Common;
+using PoolMate.Api.Dtos.Admin.Player;
 using PoolMate.Api.Dtos.Admin.Users;
 using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Services;
+using PoolMate.Api.Dtos.Response;
+using System.Security.Claims;
 
 namespace PoolMate.Api.Controllers;
 
@@ -13,181 +17,257 @@ public class AdminUsersController : ControllerBase
 {
     private readonly IAdminUserService _userService;
     private readonly ILogger<AdminUsersController> _logger;
+    private readonly IAdminPlayerService _playerService;
 
     public AdminUsersController(
         IAdminUserService userService,
+        IAdminPlayerService playerService,
         ILogger<AdminUsersController> logger)
     {
         _userService = userService;
+        _playerService = playerService;
         _logger = logger;
     }
 
 
-    /// GET: api/admin/users
-    /// Lấy danh sách users với phân trang, filter, search, sort
     [HttpGet]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetUsers(
+    [ProducesResponseType(typeof(ApiResponse<PagingList<AdminUserListDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<PagingList<AdminUserListDto>>>> GetUsers(
         [FromQuery] AdminUserFilterDto filter,
         CancellationToken ct)
     {
-        var response = await _userService.GetUsersAsync(filter, ct);
-        
-        if (!response.Success)
+        try
         {
-            return BadRequest(new { message = response.Message });
-        }
+            var result = await _userService.GetUsersAsync(filter, ct);
 
-        return Ok(response.Data);
+            if (!result.Success)
+            {
+                // Trả về lỗi bọc trong ApiResponse
+                return BadRequest(ApiResponse<object>.Fail(400, result.Message));
+            }
+
+            // Ép kiểu dữ liệu trả về từ Service (vì Service của bạn đang trả về object chung chung)
+            if (result.Data is not PagingList<AdminUserListDto> data)
+            {
+                return StatusCode(500, ApiResponse<object>.Fail(500, "Data type mismatch"));
+            }
+
+            // Trả về thành công bọc trong ApiResponse
+            return Ok(ApiResponse<PagingList<AdminUserListDto>>.Ok(data));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
     }
 
 
-    /// GET: api/admin/users/{id}
-    /// Lấy thông tin chi tiết của 1 user
     [HttpGet("{id}")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetUserDetail(string id, CancellationToken ct)
+    [ProducesResponseType(typeof(ApiResponse<AdminUserDetailDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<AdminUserDetailDto>>> GetUserDetail(
+        string id,
+        CancellationToken ct)
     {
-        var response = await _userService.GetUserDetailAsync(id, ct);
-        
-        if (!response.Success)
+        try
         {
-            return NotFound(new { message = response.Message });
-        }
+            var response = await _userService.GetUserDetailAsync(id, ct);
 
-        return Ok(response.Data);
+            if (!response.Success)
+            {
+                if (response.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+                {
+                    return NotFound(ApiResponse<object>.Fail(404, response.Message));
+                }
+
+                return BadRequest(ApiResponse<object>.Fail(400, response.Message));
+            }
+
+            if (response.Data is not AdminUserDetailDto data)
+            {
+                return StatusCode(500, ApiResponse<object>.Fail(500, "Data type mismatch"));
+            }
+
+            return Ok(ApiResponse<AdminUserDetailDto>.Ok(data));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
     }
 
 
-    /// PUT: api/admin/users/{id}/deactivate
-    /// Vô hiệu hóa tài khoản user (lock vĩnh viễn)
-    [HttpPut("{id}/deactivate")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> DeactivateUser(string id, CancellationToken ct)
-    {
-        var response = await _userService.DeactivateUserAsync(id, ct);
-        
-        if (!response.Success)
-        {
-            return BadRequest(new { message = response.Message });
-        }
-
-        return Ok(response.Data);
-    }
-
-
-    /// PUT: api/admin/users/{id}/reactivate
-    /// Kích hoạt lại tài khoản đã bị deactivate
-    [HttpPut("{id}/reactivate")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> ReactivateUser(string id, CancellationToken ct)
-    {
-        var response = await _userService.ReactivateUserAsync(id, ct);
-        
-        if (!response.Success)
-        {
-            return BadRequest(new { message = response.Message });
-        }
-
-        return Ok(response.Data);
-    }
-
-
-    /// GET: api/admin/users/statistics
-    /// Lấy thống kê tổng quan về users trong hệ thống
     [HttpGet("statistics")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetUserStatistics(CancellationToken ct)
+    [ProducesResponseType(typeof(ApiResponse<UserStatisticsDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<UserStatisticsDto>>> GetUserStatistics(
+        CancellationToken ct)
     {
-        var response = await _userService.GetUserStatisticsAsync(ct);
-        
-        if (!response.Success)
+        try
         {
-            return BadRequest(new { message = response.Message });
-        }
+            var response = await _userService.GetUserStatisticsAsync(ct);
+            if (!response.Success)
+            {
+                return BadRequest(ApiResponse<object>.Fail(400, response.Message));
+            }
 
-        return Ok(response.Data);
+            if (response.Data is not UserStatisticsDto data)
+            {
+                return StatusCode(500, ApiResponse<object>.Fail(500, "Data type mismatch"));
+            }
+
+            return Ok(ApiResponse<UserStatisticsDto>.Ok(data));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
     }
 
 
-    /// GET: api/admin/users/{id}/activity-log
-    /// Lấy activity log của 1 user cụ thể
     [HttpGet("{id}/activity-log")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> GetUserActivityLog(string id, CancellationToken ct)
+    [ProducesResponseType(typeof(ApiResponse<UserActivityLogDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<UserActivityLogDto>>> GetUserActivityLog(string id, CancellationToken ct)
     {
-        var response = await _userService.GetUserActivityLogAsync(id, ct);
-        
-        if (!response.Success)
+        try
         {
-            return NotFound(new { message = response.Message });
-        }
+            var response = await _userService.GetUserActivityLogAsync(id, ct);
+            if (!response.Success)
+            {
+                return NotFound(ApiResponse<object>.Fail(404, response.Message));
+            }
 
-        return Ok(response.Data);
+            if (response.Data is not UserActivityLogDto data)
+            {
+                return StatusCode(500, ApiResponse<object>.Fail(500, "Data type mismatch"));
+            }
+
+            return Ok(ApiResponse<UserActivityLogDto>.Ok(data));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
     }
-    
-    /// POST: api/admin/users/bulk-deactivate
-    /// Deactivate nhiều users cùng lúc (bulk operation)
+
+
+    [HttpPut("{id}/deactivate")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<object>>> DeactivateUser(string id, CancellationToken ct)
+    {
+        try
+        {
+            var adminId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var response = await _userService.DeactivateUserAsync(id, adminId!, ct);
+            if (!response.Success)
+            {
+                return BadRequest(ApiResponse<object>.Fail(400, response.Message));
+            }
+
+            return Ok(ApiResponse<object>.Ok(response.Data));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
+    }
+
+
+    [HttpPut("{id}/reactivate")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<object>>> ReactivateUser(string id, CancellationToken ct)
+    {
+        try
+        {
+            var response = await _userService.ReactivateUserAsync(id, ct);
+            if (!response.Success)
+            {
+                return BadRequest(ApiResponse<object>.Fail(400, response.Message));
+            }
+
+            return Ok(ApiResponse<object>.Ok(response.Data));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
+        }
+    }
+
+
     [HttpPost("bulk-deactivate")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> BulkDeactivateUsers(
-        [FromBody] BulkDeactivateUsersDto request, 
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<object>>> BulkDeactivateUsers(
+        [FromBody] BulkDeactivateUsersDto request,
         CancellationToken ct)
     {
-        if (!request.UserIds.Any())
+        try
         {
-            return BadRequest(new { message = "UserIds list cannot be empty" });
-        }
+            if (request.UserIds == null || !request.UserIds.Any())
+            {
+                return BadRequest(ApiResponse<object>.Fail(400, "UserIds list cannot be empty"));
+            }
 
-        var response = await _userService.BulkDeactivateUsersAsync(request, ct);
-        
-        if (!response.Success)
+            // 👇 Lấy ID của Admin đang đăng nhập
+            var adminId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            var response = await _userService.BulkDeactivateUsersAsync(request, adminId!, ct);
+            if (!response.Success)
+            {
+                return BadRequest(ApiResponse<object>.Fail(400, response.Message));
+            }
+
+            return Ok(ApiResponse<object>.Ok(response.Data));
+        }
+        catch (Exception ex)
         {
-            return BadRequest(new { message = response.Message });
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
         }
-
-        return Ok(response.Data);
     }
 
 
-    /// POST: api/admin/users/bulk-reactivate
-    /// Reactivate nhiều users cùng lúc (bulk operation)
     [HttpPost("bulk-reactivate")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> BulkReactivateUsers(
-        [FromBody] BulkReactivateUsersDto request, 
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<ApiResponse<object>>> BulkReactivateUsers(
+        [FromBody] BulkReactivateUsersDto request,
         CancellationToken ct)
     {
-        if (!request.UserIds.Any())
+        try
         {
-            return BadRequest(new { message = "UserIds list cannot be empty" });
-        }
+            if (request.UserIds == null || !request.UserIds.Any())
+            {
+                return BadRequest(ApiResponse<object>.Fail(400, "UserIds list cannot be empty"));
+            }
 
-        var response = await _userService.BulkReactivateUsersAsync(request, ct);
-        
-        if (!response.Success)
+            var response = await _userService.BulkReactivateUsersAsync(request, ct);
+
+            if (!response.Success)
+            {
+                return BadRequest(ApiResponse<object>.Fail(400, response.Message));
+            }
+
+            return Ok(ApiResponse<object>.Ok(response.Data));
+        }
+        catch (Exception ex)
         {
-            return BadRequest(new { message = response.Message });
+            return StatusCode(500, ApiResponse<object>.Fail(500, "Internal server error"));
         }
-
-        return Ok(response.Data);
     }
 
-
-    /// GET: api/admin/users/export
-    /// Export danh sách users ra CSV file
+    
     [HttpGet("export")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -197,20 +277,16 @@ public class AdminUsersController : ControllerBase
         CancellationToken ct)
     {
         var response = await _userService.ExportUsersAsync(filter, ct);
-        
         if (!response.Success)
         {
             return BadRequest(new { message = response.Message });
         }
-
-        var exportData = response.Data as dynamic;
-        if (exportData == null)
+        
+        if (response.Data is not FileExportDto exportData)
         {
-            return BadRequest(new { message = "Export failed" });
+            return StatusCode(500, new { message = "Export data format mismatch" });
         }
-
-        // Return CSV file
-        var content = System.Text.Encoding.UTF8.GetBytes(exportData.content.ToString());
-        return File(content, "text/csv", exportData.fileName.ToString());
+        var content = System.Text.Encoding.UTF8.GetBytes(exportData.Content);
+        return File(content, "text/csv", exportData.FileName);
     }
 }
