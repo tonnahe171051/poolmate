@@ -69,6 +69,50 @@ public class AuthServiceLoginTests : AuthServiceTestBase
         Assert.Equal("This account has been locked. Please contact administrator.", exception.Message);
     }
 
+    // [NEW] Case biên quan trọng: Đã từng bị khóa nhưng giờ ĐÃ HẾT HẠN -> Phải đăng nhập được
+    /// <summary>
+    /// Test case: Lockout expired (past date) - should allow login
+    /// </summary>
+    [Fact]
+    public async Task Login_LockoutExpired_ReturnsToken()
+    {
+        // Arrange
+        var loginModel = new LoginModel
+        {
+            Username = "expireduser",
+            Password = "correctpassword"
+        };
+
+        var user = new ApplicationUser
+        {
+            Id = "user-id-expired",
+            UserName = "expireduser",
+            Email = "expired@example.com",
+            EmailConfirmed = true,
+            // Setup: Thời gian khóa là 10 phút trước -> Đã hết hạn
+            LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(-10) 
+        };
+
+        MockUserManager
+            .Setup(x => x.FindByNameAsync("expireduser"))
+            .ReturnsAsync(user);
+
+        MockUserManager
+            .Setup(x => x.CheckPasswordAsync(user, "correctpassword"))
+            .ReturnsAsync(true);
+
+        MockUserManager
+            .Setup(x => x.GetRolesAsync(user))
+            .ReturnsAsync(new List<string> { "Player" });
+
+        // Act
+        var result = await Sut.LoginAsync(loginModel);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.NotEmpty(result.Value.Token);
+    }
+
     /// <summary>
     /// Test case: Wrong password - should throw InvalidOperationException
     /// </summary>
@@ -144,6 +188,59 @@ public class AuthServiceLoginTests : AuthServiceTestBase
         Assert.Equal("Email is not confirmed.", exception.Message);
     }
 
+    // [NEW] Case biên Input: Username có khoảng trắng -> Hệ thống phải tự Trim
+    /// <summary>
+    /// Test case: Username has whitespace - should trim and succeed
+    /// </summary>
+    [Fact]
+    public async Task Login_UsernameWithSpaces_ReturnsToken()
+    {
+        // Arrange
+        var loginModel = new LoginModel
+        {
+            Username = "  testuser  ", // Input có dấu cách
+            Password = "correctpassword"
+        };
+
+        var user = new ApplicationUser
+        {
+            UserName = "testuser", // DB sạch
+            EmailConfirmed = true
+        };
+
+        // Mock: Nếu code service không gọi .Trim(), nó sẽ tìm "  testuser  " và mock này sẽ fail
+        MockUserManager
+            .Setup(x => x.FindByNameAsync("testuser")) 
+            .ReturnsAsync(user);
+
+        MockUserManager
+            .Setup(x => x.CheckPasswordAsync(user, "correctpassword"))
+            .ReturnsAsync(true);
+
+        MockUserManager.Setup(x => x.GetRolesAsync(user)).ReturnsAsync(new List<string>());
+
+        // Act
+        var result = await Sut.LoginAsync(loginModel);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.NotEmpty(result.Value.Token);
+    }
+
+    // [NEW] Case biên Input: Input là Null -> Phải báo lỗi tham số (không được crash)
+    /// <summary>
+    /// Test case: Input model is null - should throw ArgumentNullException
+    /// </summary>
+    [Fact]
+    public async Task Login_NullInput_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        // Giả sử code Sut.LoginAsync(null) sẽ ném ra ArgumentNullException
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => Sut.LoginAsync(null)
+        );
+    }
+
     /// <summary>
     /// Test case: Successful login - should return token and user info (Happy Path)
     /// </summary>
@@ -196,4 +293,3 @@ public class AuthServiceLoginTests : AuthServiceTestBase
 
     #endregion
 }
-
