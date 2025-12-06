@@ -108,82 +108,65 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(opt =>
 // JWT Bearer Configuration
 var jwt = builder.Configuration.GetSection("JWT");
 builder.Services.AddAuthentication(o =>
+{
+    o.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    o.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(o =>
+{
+    o.TokenValidationParameters = new TokenValidationParameters
     {
-        o.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-        o.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-    })
-    .AddJwtBearer(o =>
+        ValidateIssuer = true,
+        ValidIssuer = jwt["ValidIssuer"],
+        ValidateAudience = true,
+        ValidAudience = jwt["ValidAudience"],
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Secret"]!)),
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.Zero
+    };
+<<<<<<<<< Temporary merge branch 1
+    o.Events = new JwtBearerEvents
     {
-        o.TokenValidationParameters = new TokenValidationParameters
+        //  401 Unauthorized 
+        OnChallenge = context =>
         {
-            ValidateIssuer = true,
-            ValidIssuer = jwt["ValidIssuer"],
-            ValidateAudience = true,
-            ValidAudience = jwt["ValidAudience"],
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Secret"]!)),
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero
-        };
+            context.HandleResponse();
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.ContentType = "application/json";
+            var response = ApiResponse<object>.Fail(401, "Unauthorized: You are not logged in or token is invalid.");
+            var json = JsonSerializer.Serialize(response);
+            return context.Response.WriteAsync(json);
+        },
         
-        o.Events = new JwtBearerEvents
+        // 403 Forbidden
+        OnForbidden = context =>
         {
-            // --- XỬ LÝ TOKEN CHO SIGNALR ---
-            OnMessageReceived = context =>
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/json";
+            var response = ApiResponse<object>.Fail(403, "Forbidden: You do not have permission to access this resource.");
+            var json = JsonSerializer.Serialize(response);
+            return context.Response.WriteAsync(json);
+=========
+
+    // Allow token from query string for SignalR
+    o.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.HttpContext.Request.Path;
+
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
             {
-                var accessToken = context.Request.Query["access_token"];
-                var path = context.HttpContext.Request.Path;
-
-                // SignalR gửi token qua query string, cần gán thủ công vào context
-                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
-                {
-                    context.Token = accessToken;
-                }
-
-                return Task.CompletedTask;
-            },
-
-            // Kiểm tra user bị khóa (Lockout Check)
-            OnTokenValidated = async context =>
-            {
-                var userManager = context.HttpContext.RequestServices
-                    .GetRequiredService<UserManager<ApplicationUser>>();
-                var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
-                if (!string.IsNullOrEmpty(userId))
-                {
-                    var user = await userManager.FindByIdAsync(userId);
-                    if (user == null ||
-                        (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow))
-                    {
-                        context.Fail("This account has been deactivated/locked.");
-                    }
-                }
-            },
-
-            // 401 Unauthorized 
-            OnChallenge = context =>
-            {
-                context.HandleResponse();
-                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                context.Response.ContentType = "application/json";
-                var response =
-                    ApiResponse<object>.Fail(401, "Unauthorized: You are not logged in or token is invalid.");
-                var json = JsonSerializer.Serialize(response);
-                return context.Response.WriteAsync(json);
-            },
-
-            // 403 Forbidden
-            OnForbidden = context =>
-            {
-                context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                context.Response.ContentType = "application/json";
-                var response = ApiResponse<object>.Fail(403,
-                    "Forbidden: You do not have permission to access this resource.");
-                var json = JsonSerializer.Serialize(response);
-                return context.Response.WriteAsync(json);
+                context.Token = accessToken;
             }
-        };
-    });
+
+            return Task.CompletedTask;
+>>>>>>>>> Temporary merge branch 2
+        }
+    };
+});
 
 //Email
 builder.Services.Configure<EmailSettings>(
