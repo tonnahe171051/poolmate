@@ -11,7 +11,7 @@ namespace PoolMate.Api.Services
 
         Task<Response> ConfirmEmailAsync(string userId, string token, CancellationToken ct = default);
 
-        Task<Response> RegisterAdminAsync(RegisterModel model, CancellationToken ct = default);
+        // Task<Response> RegisterAdminAsync(RegisterModel model, CancellationToken ct = default);
 
         Task<Response> ForgotPasswordAsync(string email, string baseUri, CancellationToken ct = default);
 

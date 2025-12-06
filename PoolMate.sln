@@ -5,6 +5,8 @@ VisualStudioVersion = 17.13.35828.75
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PoolMate.Api", "PoolMateBackend\PoolMate.Api.csproj", "{D022B889-0770-4780-BE9E-4967F0ECFDD0}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PoolMateBackend.Tests", "PoolMateBackend.Tests\PoolMateBackend.Tests.csproj", "{C4290111-2B4F-4DFE-B64C-C35E00D4DC06}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{D022B889-0770-4780-BE9E-4967F0ECFDD0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D022B889-0770-4780-BE9E-4967F0ECFDD0}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D022B889-0770-4780-BE9E-4967F0ECFDD0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C4290111-2B4F-4DFE-B64C-C35E00D4DC06}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C4290111-2B4F-4DFE-B64C-C35E00D4DC06}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C4290111-2B4F-4DFE-B64C-C35E00D4DC06}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C4290111-2B4F-4DFE-B64C-C35E00D4DC06}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -100,30 +100,7 @@ public class AuthService : IAuthService
         var msg = string.Join("; ", result.Errors.Select(e => e.Description));
         return Response.Error(string.IsNullOrWhiteSpace(msg) ? "Invalid or expired token." : msg);
     }
-
-    public async Task<Response> RegisterAdminAsync(RegisterModel model, CancellationToken ct = default)
-    {
-        if (await _users.FindByNameAsync(model.Username) is not null)
-            return Response.Error("User already exists!");
-        var user = new ApplicationUser
-        {
-            UserName = model.Username,
-            Email = model.Email,
-            SecurityStamp = Guid.NewGuid().ToString(),
-            EmailConfirmed = true
-        };
-        var result = await _users.CreateAsync(user, model.Password);
-        if (!result.Succeeded)
-            return Response.Error(string.Join("; ", result.Errors.Select(e => e.Description)));
-
-        if (!await _roles.RoleExistsAsync(UserRoles.ADMIN))
-            await _roles.CreateAsync(new IdentityRole(UserRoles.ADMIN));
-
-        await _users.AddToRoleAsync(user, UserRoles.ADMIN);
-
-        return Response.Ok("Admin created successfully.");
-    }
-
+    
     // FORGOT PASSWORD - Send reset password email
     public async Task<Response> ForgotPasswordAsync(string email, string baseUri, CancellationToken ct = default)
     {
@@ -176,9 +153,7 @@ public class AuthService : IAuthService
 
         return Response.Ok("Password changed successfully");
     }
-
-
-
+    
     // ===== helper =====
 
     private async Task SendPasswordResetEmailAsync(ApplicationUser user, string baseUri, CancellationToken ct)
