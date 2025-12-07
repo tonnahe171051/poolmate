@@ -162,7 +162,7 @@ public class PayoutService : IPayoutService
         entity.Places = dto.Distribution.Count;
         entity.PercentJson = JsonSerializer.Serialize(dto.Distribution);
 
-        await _db.SaveChangesAsync(ct);
+        // await _db.SaveChangesAsync(ct);
 
         // 4. Lưu thay đổi
         await _db.SaveChangesAsync(ct);
