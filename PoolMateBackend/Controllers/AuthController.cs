@@ -20,13 +20,13 @@ public class AuthController(IAuthService auth, IConfiguration config) : Controll
         return res.Status == "Success" ? Ok(res) : BadRequest(res);
     }
 
-    [HttpPost("register-admin")]
-    [Authorize(Roles = UserRoles.ADMIN)] 
-    public async Task<IActionResult> RegisterAdmin([FromBody] RegisterModel model, CancellationToken ct)
-    {
-        var res = await auth.RegisterAdminAsync(model, ct); 
-        return res.Status == "Success" ? Ok(res) : BadRequest(res);
-    }
+    // [HttpPost("register-admin")]
+    // [Authorize(Roles = UserRoles.ADMIN)] 
+    // public async Task<IActionResult> RegisterAdmin([FromBody] RegisterModel model, CancellationToken ct)
+    // {
+    //     var res = await auth.RegisterAdminAsync(model, ct); 
+    //     return res.Status == "Success" ? Ok(res) : BadRequest(res);
+    // }
 
     [HttpGet("confirm-email")]
     [AllowAnonymous]

@@ -453,7 +453,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("{id}/stages/{stageNo}/preview")]
-    public async Task<ActionResult<StagePreviewDto>> PreviewStage(int id, int stageNo, CancellationToken ct)
+    public async Task<ActionResult<StageDto>> PreviewStage(int id, int stageNo, CancellationToken ct)
     {
         try
         {

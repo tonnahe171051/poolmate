@@ -30,11 +30,13 @@ builder.Services.AddCors(options =>
     options.AddPolicy("ReactPolicy", policy =>
     {
         policy.WithOrigins(
-                "http://localhost:3000", // React dev server
-                "http://localhost:3001", // Alternative React port
-                "https://localhost:3000", // HTTPS React dev
-                "https://localhost:3001" // HTTPS alternative
+                "http://localhost:3000",      // React dev server
+                "http://localhost:3001",      // Alternative React port
+                "https://localhost:3000",     // HTTPS React dev
+                "https://localhost:3001",     // HTTPS alternative
+                "https://poolmate-fe.vercel.app"  // URL frontend production
             )
+            .SetIsOriginAllowedToAllowWildcardSubdomains()
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -43,7 +45,9 @@ builder.Services.AddCors(options =>
     // Policy for production
     options.AddPolicy("ProductionPolicy", policy =>
     {
-        policy.WithOrigins("https://your-production-domain.com")
+        policy.WithOrigins(
+                "https://poolmate-fe.vercel.app"
+            )
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
