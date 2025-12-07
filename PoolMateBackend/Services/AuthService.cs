@@ -1,4 +1,4 @@
-﻿using System.IdentityModel.Tokens.Jwt;
+﻿﻿using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Identity;
@@ -33,6 +33,8 @@ public class AuthService : IAuthService
     public async Task<(string Token, DateTime Exp, string UserId, string? UserName, string? Email, IList<string> Roles)?>
         LoginAsync(LoginModel model, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(model);
+        
         var username = model.Username?.Trim();
 
         var user = await _users.FindByNameAsync(username);
