@@ -163,7 +163,7 @@ public class AuthService : IAuthService
         var token = await _users.GeneratePasswordResetTokenAsync(user);
         var tokenEncoded = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
         
-        var resetUrl = $"{frontendBaseUrl}/reset-password?userId={user.Id}&token={tokenEncoded}";
+        var resetUrl = $"{frontendBaseUrl}/api/auth/reset-password?userId={user.Id}&token={tokenEncoded}";
 
         await _email.SendAsync(user.Email!, "Reset your password",
             $"Hi {user.UserName},\n\nTo reset your password, please click the link below:\n{resetUrl}\n\nThis link will expire in 24 hours.\n\nIf you did not request this, please ignore this email.", ct);
@@ -174,8 +174,8 @@ public class AuthService : IAuthService
     {
         var token = await _users.GenerateEmailConfirmationTokenAsync(u);
         var tokenEncoded = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
-        
-        var confirmUrl = $"{frontendBaseUrl}/confirm-email?userId={u.Id}&token={tokenEncoded}";
+
+        var confirmUrl = $"{frontendBaseUrl}/api/auth/confirm-email?userId={u.Id}&token={tokenEncoded}";
 
         await _email.SendAsync(u.Email!, "Confirm your email",
             $"Hi {u.UserName},\n\nWelcome to PoolMate! Please confirm your email by clicking the link below:\n{confirmUrl}\n\nThis link will expire in 24 hours.", ct);
