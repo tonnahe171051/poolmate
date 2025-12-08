@@ -316,3 +316,6 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapHub<TournamentHub>("/hubs/tournament");
 app.Run();
+
+// Required for WebApplicationFactory to access Program class in integration tests
+public partial class Program { }
