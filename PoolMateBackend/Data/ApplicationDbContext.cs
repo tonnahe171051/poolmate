@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using PoolMate.Api.Models;
 
@@ -19,6 +20,33 @@ namespace PoolMate.Api.Data
         public DbSet<TournamentTable> TournamentTables => Set<TournamentTable>();
         public DbSet<TournamentStage> TournamentStages => Set<TournamentStage>();
         public DbSet<Match> Matches => Set<Match>();
+
+        // New method for auto-initialization of DB and schema
+        public void EnsureDatabaseCreated(string connectionString)
+        {
+            // 1. Extract database name
+            var builder = new SqlConnectionStringBuilder(connectionString);
+            string databaseName = builder.InitialCatalog;
+
+            // 2. Connect to 'master'
+            builder.InitialCatalog = "master";
+            string masterConnectionString = builder.ToString();
+
+            using (var connection = new SqlConnection(masterConnectionString))
+            {
+                connection.Open(); // Synchronous Open
+                                   // 3. Check and create DB
+
+                var checkDbCommand = $"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{databaseName}') CREATE DATABASE [{databaseName}];";
+                using (var command = new SqlCommand(checkDbCommand, connection))
+                {
+                    command.ExecuteNonQuery(); // Synchronous Execute
+                }
+            }
+
+            // 4. Run EF Core Migrations synchronously
+            Database.Migrate(); // Synchronous Migrate
+        }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
