@@ -26,7 +26,7 @@ services:
       - EmailSettings__SmtpPort=587
       - EmailSettings__SenderEmail=onlshop458@gmail.com
       - EmailSettings__SenderPassword=hhzz czmv jzbn pgen
-      - AppSettings__FrontendUrl=http://localhost:3000
+      - AppSettings__FrontendUrl=https://poolmate-fe.vercel.app
       - AppSettings__BackendUrl=https://poolmate-api.bigthing.vn
       - Logging__LogLevel__Default=Information
       - Logging__LogLevel__Microsoft.AspNetCore=Warning
