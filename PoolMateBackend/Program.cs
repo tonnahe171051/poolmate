@@ -247,6 +247,29 @@ builder.Services.AddScoped<IProfileService, ProfileService>();
 
 var app = builder.Build();
 
+// Auto-initialize database and schema
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var logger = services.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        var context = services.GetRequiredService<ApplicationDbContext>();
+        var connectionString = builder.Configuration.GetConnectionString("ConnStr");
+
+        logger.LogInformation("Starting database initialization...");
+        context.EnsureDatabaseCreated(connectionString); // Synchronous call
+        logger.LogInformation("Database initialization finished successfully.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "An error occurred while initializing the database.");
+        // Consider if the app should fail fast here
+        // throw;
+    }
+}
+
 // Custom validation exception middleware: convert ValidationException to HTTP 400 JSON
 app.Use(async (context, next) =>
 {
