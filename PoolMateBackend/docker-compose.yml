@@ -27,7 +27,7 @@ services:
       - EmailSettings__SenderEmail=onlshop458@gmail.com
       - EmailSettings__SenderPassword=hhzz czmv jzbn pgen
       - AppSettings__FrontendUrl=http://localhost:3000
-      - AppSettings__BackendUrl=https://localhost:7127
+      - AppSettings__BackendUrl=https://poolmate-api.bigthing.vn
       - Logging__LogLevel__Default=Information
       - Logging__LogLevel__Microsoft.AspNetCore=Warning
       - FargoRate__ApiBaseUrl=https://dashboard.fargorate.com/api
@@ -40,6 +40,10 @@ services:
       - Cloudinary__ApiSecret=IzD9qx4t8OKCqt5WbH6n8BoFgV0
       - Cloudinary__ApiKey=334153755786657
       - AllowedHosts=*
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.poolmate.rule=Host(`poolmate-api.bigthing.vn`)"
+      - "traefik.http.services.poolmate.loadbalancer.server.port=7127"
 
   db:
     hostname: db
