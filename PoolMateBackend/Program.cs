@@ -24,19 +24,37 @@ if (builder.Environment.IsDevelopment())
     builder.Configuration.AddUserSecrets<Program>();
 }
 
+bool AllowDevOrigins(string? origin) => IsAllowedOrigin(origin, includeLocalhost: true);
+bool AllowProdOrigins(string? origin) => IsAllowedOrigin(origin, includeLocalhost: false);
+
+static bool IsAllowedOrigin(string? origin, bool includeLocalhost)
+{
+    if (string.IsNullOrWhiteSpace(origin))
+        return false;
+
+    if (includeLocalhost &&
+        (origin.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase) ||
+         origin.StartsWith("https://localhost", StringComparison.OrdinalIgnoreCase)))
+    {
+        return true;
+    }
+
+    if (origin.Equals("https://poolmate-fe.vercel.app", StringComparison.OrdinalIgnoreCase))
+        return true;
+
+    if (origin.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase))
+        return true;
+
+    return false;
+}
+
 // CORS Configuration
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("ReactPolicy", policy =>
     {
-        policy.WithOrigins(
-                "http://localhost:3000",      // React dev server
-                "http://localhost:3001",      // Alternative React port
-                "https://localhost:3000",     // HTTPS React dev
-                "https://localhost:3001",     // HTTPS alternative
-                "https://poolmate-fe.vercel.app"  // URL frontend production
-            )
-            .SetIsOriginAllowedToAllowWildcardSubdomains()
+        policy
+            .SetIsOriginAllowed(AllowDevOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -45,9 +63,8 @@ builder.Services.AddCors(options =>
     // Policy for production
     options.AddPolicy("ProductionPolicy", policy =>
     {
-        policy.WithOrigins(
-                "https://poolmate-fe.vercel.app"
-            )
+        policy
+            .SetIsOriginAllowed(AllowProdOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -218,9 +235,12 @@ builder.Services.AddScoped<ITableTokenService, TableTokenService>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<IPostService, PostService>();
 builder.Services.AddScoped<ITournamentService, TournamentService>();
+builder.Services.AddScoped<ITournamentPlayerService, TournamentPlayerService>();
+builder.Services.AddScoped<ITournamentTableService, TournamentTableService>();
 builder.Services.AddScoped<IVenueService, VenueService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IBracketService, BracketService>();
+builder.Services.AddScoped<IMatchService, MatchService>();
 builder.Services.AddScoped<IAdminUserService, AdminUserService>();
 builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
 builder.Services.AddScoped<IPlayerProfileService, PlayerProfileService>();
@@ -259,7 +279,7 @@ using (var scope = app.Services.CreateScope())
         var connectionString = builder.Configuration.GetConnectionString("ConnStr");
 
         logger.LogInformation("Starting database initialization...");
-        context.EnsureDatabaseCreated(connectionString); // Synchronous call
+        context.EnsureDatabaseCreated(connectionString!); // Synchronous call
         logger.LogInformation("Database initialization finished successfully.");
     }
     catch (Exception ex)

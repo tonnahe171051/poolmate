@@ -2,13 +2,10 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using PoolMate.Api.Common;
 using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Tournament;
-using PoolMate.Api.Hubs;
 using PoolMate.Api.Models;
 
 namespace PoolMate.Api.Services
@@ -16,34 +13,27 @@ namespace PoolMate.Api.Services
     public class BracketService : IBracketService
     {
         private readonly ApplicationDbContext _db;
-        private readonly IMatchLockService _lockService;
-        private readonly IHubContext<TournamentHub> _hubContext;
-        private readonly ILogger<BracketService> _logger;
-        private readonly Random _rng = new();
+        private readonly IMatchService _matchService;
 
         public BracketService(
             ApplicationDbContext db,
-            IMatchLockService lockService,
-            IHubContext<TournamentHub> hubContext,
-            ILogger<BracketService> logger)
+            IMatchService matchService)
         {
             _db = db;
-            _lockService = lockService;
-            _hubContext = hubContext;
-            _logger = logger;
+            _matchService = matchService;
         }
 
         // Single validation helper (unified) — throws ValidationException for input validation
         private void ValidatePlayerCountForCreate(Models.Tournament t, int count)
         {
             if (count < 2)
-                throw new PoolMate.Api.Common.ValidationException("At least two players are required to create a bracket.");
+                throw new ValidationException("At least two players are required to create a bracket.");
 
             if (t.IsMultiStage && t.AdvanceToStage2Count.HasValue)
             {
                 var requiredPlayers = Math.Max(t.AdvanceToStage2Count.Value + 1, 5);
                 if (count < requiredPlayers)
-                    throw new PoolMate.Api.Common.ValidationException($"Multi-stage bracket requires at least {requiredPlayers} players assigned in stage 1 for advance count {t.AdvanceToStage2Count.Value}.");
+                    throw new ValidationException($"Multi-stage bracket requires at least {requiredPlayers} players assigned in stage 1 for advance count {t.AdvanceToStage2Count.Value}.");
             }
         }
 
@@ -259,7 +249,7 @@ namespace PoolMate.Api.Services
                     slots: slots,
                     ct: ct);
 
-                await ProcessAutoAdvancements(t.Id, ct);
+                await _matchService.ProcessAutoAdvancementsAsync(t.Id, ct);
             }
             catch (Exception ex)
             {
@@ -270,7 +260,7 @@ namespace PoolMate.Api.Services
 
         public async Task<BracketDto> GetAsync(int tournamentId, CancellationToken ct)
         {
-            await ProcessAutoAdvancements(tournamentId, ct);
+            await _matchService.ProcessAutoAdvancementsAsync(tournamentId, ct);
 
             var tournament = await _db.Tournaments
                 .Include(x => x.Stages)
@@ -434,13 +424,6 @@ namespace PoolMate.Api.Services
             }
 
             return res;
-        }
-
-        public async Task<MatchDto> GetMatchAsync(int matchId, CancellationToken ct)
-        {
-            var match = await LoadMatchForScoringAsync(matchId, ct);
-            var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            return MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
         }
 
         private BracketDto ApplyBracketFilter(BracketDto bracket, BracketFilterRequest filter)
@@ -646,183 +629,6 @@ namespace PoolMate.Api.Services
                 await _db.SaveChangesAsync(ct);
         }
 
-        public async Task<MatchDto> UpdateMatchAsync(int matchId, UpdateMatchRequest request, CancellationToken ct)
-        {
-            if (request is null)
-                throw new ArgumentNullException(nameof(request));
-
-            var match = await LoadMatchAggregateAsync(matchId, ct);
-
-            if (match.Stage.Status == StageStatus.Completed)
-                throw new InvalidOperationException("Stage has been completed and cannot be modified.");
-
-            // Disallow manual edits to matches that are designated auto-only by the bracket
-            if (!await IsMatchManuallyEditable(match, ct))
-                throw new InvalidOperationException("This match cannot be modified manually; it is auto-propagated by bracket logic.");
-
-            if (match.Status == MatchStatus.Completed)
-                throw new InvalidOperationException("Match already completed. Use correct-result workflow.");
-
-            ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
-
-            if (request.RaceTo.HasValue)
-            {
-                if (request.RaceTo.Value <= 0)
-                    throw new InvalidOperationException("Race-to value must be positive.");
-                match.RaceTo = request.RaceTo;
-            }
-
-            if (request.ScheduledUtc.HasValue)
-                match.ScheduledUtc = request.ScheduledUtc;
-
-            var previousStatus = match.Status;
-            var previousTableId = match.TableId;
-
-            if (request.TableId.HasValue)
-            {
-                if (match.TableId != request.TableId.Value)
-                {
-                    var table = await ValidateTableSelectionAsync(match, request.TableId.Value, ct);
-                    match.TableId = table.Id;
-                    match.Table = table;
-                }
-            }
-            else if (match.TableId.HasValue)
-            {
-                match.TableId = null;
-                match.Table = null;
-            }
-
-            match.ScoreP1 = request.ScoreP1;
-            match.ScoreP2 = request.ScoreP2;
-
-            int? winnerTpId = request.WinnerTpId;
-            if (winnerTpId.HasValue)
-            {
-                EnsureWinnerBelongsToMatch(match, winnerTpId.Value);
-            }
-            else
-            {
-                winnerTpId = InferWinnerFromScores(match);
-            }
-
-            var hasProgress = HasProgress(match.ScoreP1, match.ScoreP2, match.TableId);
-
-            if ((winnerTpId.HasValue || hasProgress) &&
-                match.Player1TpId.HasValue &&
-                match.Player2TpId.HasValue &&
-                match.Player1TpId == match.Player2TpId)
-            {
-                throw new InvalidOperationException("Cannot progress match because the same player occupies both slots.");
-            }
-
-            match.WinnerTpId = winnerTpId;
-            match.WinnerTp = winnerTpId switch
-            {
-                not null and var id when id == match.Player1TpId => match.Player1Tp,
-                not null and var id when id == match.Player2TpId => match.Player2Tp,
-                _ => null
-            };
-
-            if (winnerTpId.HasValue)
-            {
-                match.Status = MatchStatus.Completed;
-            }
-            else if (hasProgress)
-            {
-                match.Status = MatchStatus.InProgress;
-            }
-            else
-            {
-                match.Status = MatchStatus.NotStarted;
-            }
-
-            await UpdateTableUsageAsync(match, previousTableId, previousStatus, ct);
-
-            Dictionary<int, Match>? matchDict = null;
-            if (match.Status == MatchStatus.Completed)
-            {
-                matchDict = await LoadTournamentMatchesDictionaryAsync(match.TournamentId, ct);
-                PropagateResult(match, matchDict);
-            }
-
-            await _db.SaveChangesAsync(ct);
-
-            if (matchDict is not null)
-                await ProcessAutoAdvancements(match.TournamentId, ct);
-
-            var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-
-            // Broadcast realtime updates
-            // bracketChanged = true if match completed OR table assignment changed
-            var tableAssignmentChanged = previousTableId != match.TableId;
-            await PublishRealtimeUpdates(match, dto, bracketChanged: match.Status == MatchStatus.Completed || tableAssignmentChanged, ct);
-
-            return dto;
-        }
-
-        public async Task<MatchDto> CorrectMatchResultAsync(int matchId, CorrectMatchResultRequest request, CancellationToken ct)
-        {
-            if (request is null)
-                throw new ArgumentNullException(nameof(request));
-
-            var match = await LoadMatchAggregateAsync(matchId, ct);
-
-            if (match.Stage.Status == StageStatus.Completed)
-                throw new InvalidOperationException("Stage has been completed and cannot be modified.");
-
-            if (match.WinnerTpId is null)
-                throw new InvalidOperationException("Match has no recorded result to correct.");
-
-            EnsureWinnerBelongsToMatch(match, request.WinnerTpId);
-            ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
-
-            if (request.RaceTo.HasValue)
-            {
-                if (request.RaceTo.Value <= 0)
-                    throw new InvalidOperationException("Race-to value must be positive.");
-                match.RaceTo = request.RaceTo;
-            }
-
-            var previousStatus = match.Status;
-            var previousTableId = match.TableId;
-
-            var matchDict = await LoadTournamentMatchesDictionaryAsync(match.TournamentId, ct);
-            var dependencyMap = BuildDependencyMap(matchDict);
-
-            var processed = new HashSet<int>();
-            var tableSnapshot = new Dictionary<int, (int? TableId, MatchStatus PreviousStatus)>();
-
-            RewindCascade(match.Id, dependencyMap, processed, tableSnapshot);
-
-            match.ScoreP1 = request.ScoreP1;
-            match.ScoreP2 = request.ScoreP2;
-            match.WinnerTpId = request.WinnerTpId;
-            match.WinnerTp = request.WinnerTpId == match.Player1TpId ? match.Player1Tp :
-                              request.WinnerTpId == match.Player2TpId ? match.Player2Tp : null;
-            match.Status = MatchStatus.Completed;
-
-            foreach (var entry in tableSnapshot)
-            {
-                await UpdateTableUsageAsync(matchDict[entry.Key], entry.Value.TableId, entry.Value.PreviousStatus, ct);
-            }
-
-            await UpdateTableUsageAsync(match, previousTableId, previousStatus, ct);
-
-            PropagateResult(match, matchDict);
-
-            await _db.SaveChangesAsync(ct);
-            await ProcessAutoAdvancements(match.TournamentId, ct);
-
-            var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-
-            // Broadcast realtime updates
-            await PublishRealtimeUpdates(match, dto, bracketChanged: true, ct);
-
-            return dto;
-        }
 
         public async Task<StageCompletionResultDto> CompleteStageAsync(int tournamentId, int stageNo, CompleteStageRequest request, CancellationToken ct)
         {
@@ -833,6 +639,12 @@ namespace PoolMate.Api.Services
 
             var stage = tournament.Stages.FirstOrDefault(s => s.StageNo == stageNo)
                 ?? throw new InvalidOperationException("Stage not found.");
+
+            if (!tournament.IsStarted || tournament.Status == TournamentStatus.Upcoming)
+                throw new InvalidOperationException("Tournament must be started before completing a stage.");
+
+            if (tournament.Status == TournamentStatus.Completed)
+                throw new InvalidOperationException("Tournament has already been completed.");
 
             if (stage.Status == StageStatus.Completed)
                 throw new InvalidOperationException("Stage already completed.");
@@ -958,7 +770,7 @@ namespace PoolMate.Api.Services
 
             if (createdStage2)
             {
-                await ProcessAutoAdvancements(tournament.Id, ct);
+                await _matchService.ProcessAutoAdvancementsAsync(tournament.Id, ct);
             }
 
             return new StageCompletionResultDto
@@ -974,7 +786,7 @@ namespace PoolMate.Api.Services
 
         public async Task<TournamentStatusSummaryDto> GetTournamentStatusAsync(int tournamentId, CancellationToken ct)
         {
-            await ProcessAutoAdvancements(tournamentId, ct);
+            await _matchService.ProcessAutoAdvancementsAsync(tournamentId, ct);
 
             var tournament = await _db.Tournaments
                 .Include(t => t.Tables)
@@ -1065,159 +877,6 @@ namespace PoolMate.Api.Services
             return summary;
         }
 
-        public async Task<MatchScoreUpdateResponse> UpdateLiveScoreAsync(int matchId, UpdateLiveScoreRequest request, ScoringContext actor, CancellationToken ct)
-        {
-            if (request is null)
-                throw new ArgumentNullException(nameof(request));
-            if (actor is null)
-                throw new ArgumentNullException(nameof(actor));
-
-            var lockResult = _lockService.AcquireOrRefresh(matchId, actor.ActorId, request.LockId);
-            if (!lockResult.Granted)
-                throw new MatchLockedException(lockResult.LockId, lockResult.ExpiresAt);
-
-            try
-            {
-                var match = await LoadMatchForScoringAsync(matchId, ct);
-                ValidateScoringAccess(match, actor, ensureNotCompleted: true);
-                ApplyRowVersion(match, request.RowVersion);
-                ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
-
-                var intendsToUpdateScoresOrRace = request.ScoreP1.HasValue || request.ScoreP2.HasValue || request.RaceTo.HasValue;
-                if (intendsToUpdateScoresOrRace && (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue))
-                    throw new InvalidOperationException("Both players must be assigned before updating scores or race-to.");
-
-                if (request.RaceTo.HasValue)
-                    match.RaceTo = request.RaceTo;
-
-                var previousStatus = match.Status;
-                var previousTableId = match.TableId;
-
-                if (request.ScoreP1.HasValue)
-                    match.ScoreP1 = request.ScoreP1;
-                if (request.ScoreP2.HasValue)
-                    match.ScoreP2 = request.ScoreP2;
-
-                if (!HasProgress(match.ScoreP1, match.ScoreP2, match.TableId))
-                {
-                    match.Status = MatchStatus.NotStarted;
-                    match.WinnerTpId = null;
-                    match.WinnerTp = null;
-                }
-                else if (match.Status != MatchStatus.Completed)
-                {
-                    match.Status = MatchStatus.InProgress;
-                    match.WinnerTpId = null;
-                    match.WinnerTp = null;
-                }
-
-                await UpdateTableUsageAsync(match, previousTableId, previousStatus, ct);
-                await SaveChangesWithConcurrencyAsync(match, ct);
-
-                var stageEval = await EvaluateStageAsync(match.StageId, ct);
-                var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-
-                // Broadcast bracket update on score changes to keep bracket view in sync
-                await PublishRealtimeUpdates(match, dto, bracketChanged: true, ct);
-
-                return new MatchScoreUpdateResponse
-                {
-                    Match = dto,
-                    LockId = lockResult.LockId,
-                    LockExpiresAt = lockResult.ExpiresAt,
-                    IsCompleted = match.Status == MatchStatus.Completed
-                };
-            }
-            catch (ConcurrencyConflictException)
-            {
-                _lockService.Release(matchId, lockResult.LockId, actor.ActorId);
-                throw;
-            }
-            catch
-            {
-                _lockService.Release(matchId, lockResult.LockId, actor.ActorId);
-                throw;
-            }
-        }
-
-        public async Task<MatchScoreUpdateResponse> CompleteMatchAsync(int matchId, CompleteMatchRequest request, ScoringContext actor, CancellationToken ct)
-        {
-            if (request is null)
-                throw new ArgumentNullException(nameof(request));
-            if (actor is null)
-                throw new ArgumentNullException(nameof(actor));
-
-            var lockResult = _lockService.AcquireOrRefresh(matchId, actor.ActorId, request.LockId);
-            if (!lockResult.Granted)
-                throw new MatchLockedException(lockResult.LockId, lockResult.ExpiresAt);
-
-            try
-            {
-                var match = await LoadMatchForScoringAsync(matchId, ct);
-                ValidateScoringAccess(match, actor, ensureNotCompleted: false);
-
-                ApplyRowVersion(match, request.RowVersion);
-                ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
-
-                if (request.ScoreP1.HasValue)
-                    match.ScoreP1 = request.ScoreP1;
-                if (request.ScoreP2.HasValue)
-                    match.ScoreP2 = request.ScoreP2;
-                if (request.RaceTo.HasValue)
-                    match.RaceTo = request.RaceTo;
-
-                if (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue)
-                    throw new InvalidOperationException("Both players must be assigned before completing the match.");
-
-                var raceTo = match.RaceTo ?? throw new InvalidOperationException("Race-to value must be set before completing the match.");
-
-                if (!match.ScoreP1.HasValue || !match.ScoreP2.HasValue)
-                    throw new InvalidOperationException("Both scores must be provided before completing the match.");
-
-                var winnerTpId = DetermineWinnerFromScores(
-                    match.ScoreP1.Value,
-                    match.ScoreP2.Value,
-                    match.Player1TpId.Value,
-                    match.Player2TpId.Value,
-                    raceTo);
-
-                var previousStatus = match.Status;
-                var previousTableId = match.TableId;
-
-                match.WinnerTpId = winnerTpId;
-                match.WinnerTp = winnerTpId == match.Player1TpId ? match.Player1Tp : match.Player2Tp;
-                match.Status = MatchStatus.Completed;
-
-                await UpdateTableUsageAsync(match, previousTableId, previousStatus, ct);
-
-                var matchDict = await LoadTournamentMatchesDictionaryAsync(match.TournamentId, ct);
-                PropagateResult(match, matchDict);
-
-                await SaveChangesWithConcurrencyAsync(match, ct);
-                await ProcessAutoAdvancements(match.TournamentId, ct);
-
-                var stageEval = await EvaluateStageAsync(match.StageId, ct);
-                var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-
-                await PublishRealtimeUpdates(match, dto, bracketChanged: true, ct);
-
-                return new MatchScoreUpdateResponse
-                {
-                    Match = dto,
-                    LockId = lockResult.LockId,
-                    LockExpiresAt = lockResult.ExpiresAt,
-                    IsCompleted = true
-                };
-            }
-            catch (ConcurrencyConflictException)
-            {
-                throw;
-            }
-            finally
-            {
-                _lockService.Release(matchId, lockResult.LockId, actor.ActorId);
-            }
-        }
 
         public async Task ResetAsync(int tournamentId, CancellationToken ct)
         {
@@ -1602,122 +1261,6 @@ namespace PoolMate.Api.Services
                 .FirstOrDefaultAsync(m => m.Id == matchId, ct);
 
             return match ?? throw new KeyNotFoundException("Match not found.");
-        }
-
-        private static void ValidateScoringAccess(Match match, ScoringContext actor, bool ensureNotCompleted)
-        {
-            if (ensureNotCompleted && match.Status == MatchStatus.Completed)
-                throw new InvalidOperationException("Match already completed.");
-
-            if (match.Stage.Status == StageStatus.Completed)
-                throw new InvalidOperationException("Stage already completed.");
-
-            if (actor.IsTableClient)
-            {
-                if (actor.TableId is null || !match.TableId.HasValue || actor.TableId.Value != match.TableId.Value)
-                    throw new InvalidOperationException("Table token does not match the assigned table.");
-
-                if (actor.TournamentId is null || actor.TournamentId.Value != match.TournamentId)
-                    throw new InvalidOperationException("Table token does not match the tournament.");
-            }
-        }
-
-        private void ApplyRowVersion(Match match, string rowVersionBase64)
-        {
-            if (string.IsNullOrWhiteSpace(rowVersionBase64))
-                throw new InvalidOperationException("Row version is required.");
-
-            byte[] rowVersion;
-            try
-            {
-                rowVersion = Convert.FromBase64String(rowVersionBase64);
-            }
-            catch (FormatException)
-            {
-                throw new InvalidOperationException("Row version format is invalid.");
-            }
-
-            _db.Entry(match).Property(m => m.RowVersion).OriginalValue = rowVersion;
-        }
-
-        private async Task SaveChangesWithConcurrencyAsync(Match match, CancellationToken ct)
-        {
-            try
-            {
-                await _db.SaveChangesAsync(ct);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                var latest = await GetMatchSnapshotAsync(match.Id, ct);
-                throw new ConcurrencyConflictException(latest);
-            }
-        }
-
-        private async Task<MatchDto> GetMatchSnapshotAsync(int matchId, CancellationToken ct)
-        {
-            var match = await _db.Matches
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .Include(m => m.WinnerTp)
-                .Include(m => m.Table)
-                .AsNoTracking()
-                .FirstOrDefaultAsync(m => m.Id == matchId, ct)
-                ?? throw new KeyNotFoundException("Match not found.");
-
-            var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            return MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-        }
-
-        private async Task PublishRealtimeUpdates(Match match, MatchDto dto, bool bracketChanged, CancellationToken ct)
-        {
-            try
-            {
-                var groupName = TournamentHub.GetGroupName(match.TournamentId);
-                await _hubContext.Clients.Group(groupName).SendAsync("matchUpdated", dto, ct);
-
-                if (match.TableId.HasValue)
-                {
-                    var tableStatus = await TryBuildTableStatusAsync(match.TableId.Value, ct);
-                    if (tableStatus is not null)
-                    {
-                        await _hubContext.Clients.Group(groupName).SendAsync("tableUpdated", tableStatus, ct);
-                    }
-                }
-
-                if (bracketChanged)
-                {
-                    await _hubContext.Clients.Group(groupName).SendAsync("bracketUpdated", new { tournamentId = match.TournamentId }, ct);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to broadcast realtime updates for match {MatchId}", match.Id);
-            }
-        }
-
-        private async Task<TableStatusDto?> TryBuildTableStatusAsync(int tableId, CancellationToken ct)
-        {
-            var table = await _db.TournamentTables
-                .AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Id == tableId, ct);
-
-            if (table is null)
-                return null;
-
-            var activeMatch = await _db.Matches
-                .Where(m => m.TableId == tableId && m.Status != MatchStatus.Completed)
-                .OrderBy(m => m.Id)
-                .Select(m => new { m.Id, m.Status })
-                .FirstOrDefaultAsync(ct);
-
-            return new TableStatusDto
-            {
-                TableId = table.Id,
-                TournamentId = table.TournamentId,
-                Status = table.Status,
-                CurrentMatchId = activeMatch?.Id,
-                CurrentMatchStatus = activeMatch?.Status
-            };
         }
 
         private static int DetermineWinnerFromScores(int scoreP1, int scoreP2, int player1Id, int player2Id, int raceTo)
