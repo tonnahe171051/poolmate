@@ -588,47 +588,6 @@ namespace PoolMate.Api.Services
             };
         }
 
-        private async Task ProcessAutoAdvancements(int tournamentId, CancellationToken ct)
-        {
-            var matches = await _db.Matches
-                .Where(m => m.TournamentId == tournamentId)
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .ToListAsync(ct);
-
-            if (!matches.Any())
-                return;
-
-            var matchDict = matches.ToDictionary(m => m.Id, m => m);
-            var queue = new Queue<Match>(matches.Where(m => m.Status == MatchStatus.NotStarted));
-            var changed = false;
-
-            while (queue.Count > 0)
-            {
-                var match = queue.Dequeue();
-
-                if (TryCompleteMatchByBye(match, matchDict))
-                {
-                    changed = true;
-
-                    if (match.NextWinnerMatchId.HasValue &&
-                        matchDict.TryGetValue(match.NextWinnerMatchId.Value, out var nextWinnerMatch))
-                    {
-                        queue.Enqueue(nextWinnerMatch);
-                    }
-
-                    if (match.NextLoserMatchId.HasValue &&
-                        matchDict.TryGetValue(match.NextLoserMatchId.Value, out var nextLoserMatch))
-                    {
-                        queue.Enqueue(nextLoserMatch);
-                    }
-                }
-            }
-
-            if (changed)
-                await _db.SaveChangesAsync(ct);
-        }
-
 
         public async Task<StageCompletionResultDto> CompleteStageAsync(int tournamentId, int stageNo, CompleteStageRequest request, CancellationToken ct)
         {
@@ -908,6 +867,12 @@ namespace PoolMate.Api.Services
 
         public async Task<IReadOnlyList<TournamentPlayerStatsDto>> GetPlayerStatsAsync(int tournamentId, CancellationToken ct)
         {
+            var tournamentState = await _db.Tournaments
+                .Where(t => t.Id == tournamentId)
+                .Select(t => new { t.IsStarted })
+                .FirstOrDefaultAsync(ct)
+                ?? throw new KeyNotFoundException("Tournament not found.");
+
             var players = await _db.TournamentPlayers
                 .Where(tp => tp.TournamentId == tournamentId)
                 .Select(tp => new
@@ -934,7 +899,7 @@ namespace PoolMate.Api.Services
                     RacksWon = 0,
                     RacksLost = 0,
                     LastStageNo = null,
-                    IsEliminated = true
+                    IsEliminated = false
                 });
 
             var matches = await _db.Matches
@@ -1006,24 +971,12 @@ namespace PoolMate.Api.Services
                 }
             }
 
-            foreach (var id in activePlayers)
-            {
-                if (stats.TryGetValue(id, out var stat))
-                    stat.IsEliminated = false;
-            }
-
-            var champions = matches
+            var championIds = matches
                 .Where(m => m.Status == MatchStatus.Completed && m.WinnerTpId.HasValue)
                 .Where(m => m.NextWinnerMatchId == null && m.NextLoserMatchId == null)
                 .Where(m => m.Bracket == BracketSide.Knockout || m.Bracket == BracketSide.Finals)
                 .Select(m => m.WinnerTpId!.Value)
-                .Distinct();
-
-            foreach (var championId in champions)
-            {
-                if (stats.TryGetValue(championId, out var stat))
-                    stat.IsEliminated = false;
-            }
+                .ToHashSet();
 
             var placementMatches = matches
                 .Select(m => new PlacementMatch(
@@ -1040,6 +993,19 @@ namespace PoolMate.Api.Services
                 .ToList();
 
             _ = ApplyPlacements(placementMatches, stats);
+
+            foreach (var stat in stats.Values)
+            {
+                if (!tournamentState.IsStarted || stat.MatchesPlayed == 0)
+                {
+                    stat.IsEliminated = false;
+                    continue;
+                }
+
+                var isActive = activePlayers.Contains(stat.TournamentPlayerId);
+                var isChampion = championIds.Contains(stat.TournamentPlayerId);
+                stat.IsEliminated = !(isActive || isChampion);
+            }
 
             return stats.Values
                 .OrderBy(s => s.PlacementRank ?? int.MaxValue)
@@ -1085,77 +1051,6 @@ namespace PoolMate.Api.Services
             }
 
             return lines;
-        }
-
-        private async Task<Match> LoadMatchAggregateAsync(int matchId, CancellationToken ct)
-        {
-            var match = await _db.Matches
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .Include(m => m.WinnerTp)
-                .Include(m => m.Table)
-                .Include(m => m.Stage)
-                .FirstOrDefaultAsync(m => m.Id == matchId, ct);
-
-            return match ?? throw new KeyNotFoundException("Match not found.");
-        }
-
-        private static void EnsureWinnerBelongsToMatch(Match match, int winnerTpId)
-        {
-            if (match.Player1TpId != winnerTpId && match.Player2TpId != winnerTpId)
-                throw new InvalidOperationException("Winner must be one of the players in the match.");
-        }
-
-        private static void ValidateScoreInput(Match match, int? scoreP1, int? scoreP2, int? nextRaceTo)
-        {
-            if (scoreP1.HasValue && scoreP1.Value < 0)
-                throw new InvalidOperationException("Scores must be non-negative.");
-            if (scoreP2.HasValue && scoreP2.Value < 0)
-                throw new InvalidOperationException("Scores must be non-negative.");
-
-            if (scoreP1.HasValue && match.Player1TpId is null)
-                throw new InvalidOperationException("Cannot set score for an empty player slot.");
-            if (scoreP2.HasValue && match.Player2TpId is null)
-                throw new InvalidOperationException("Cannot set score for an empty player slot.");
-
-            var raceTo = nextRaceTo ?? match.RaceTo;
-            if (raceTo.HasValue)
-            {
-                if (scoreP1.HasValue && scoreP1.Value > raceTo.Value)
-                    throw new InvalidOperationException("Score cannot exceed the race-to target.");
-                if (scoreP2.HasValue && scoreP2.Value > raceTo.Value)
-                    throw new InvalidOperationException("Score cannot exceed the race-to target.");
-            }
-        }
-
-        private static bool HasProgress(int? scoreP1, int? scoreP2, int? tableId)
-            => scoreP1.HasValue || scoreP2.HasValue || tableId.HasValue;
-
-        private static int? InferWinnerFromScores(Match match)
-        {
-            if (!match.RaceTo.HasValue)
-                return null;
-
-            var race = match.RaceTo.Value;
-            var p1Wins = match.Player1TpId.HasValue && match.ScoreP1 == race;
-            var p2Wins = match.Player2TpId.HasValue && match.ScoreP2 == race;
-
-            if (p1Wins == p2Wins)
-                return null;
-
-            return p1Wins ? match.Player1TpId : match.Player2TpId;
-        }
-
-        private async Task<Dictionary<int, Match>> LoadTournamentMatchesDictionaryAsync(int tournamentId, CancellationToken ct)
-        {
-            var matches = await _db.Matches
-                .Where(m => m.TournamentId == tournamentId)
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .Include(m => m.WinnerTp)
-                .ToListAsync(ct);
-
-            return matches.ToDictionary(m => m.Id);
         }
 
         private void PropagateResult(Match match, Dictionary<int, Match> matchDict)
@@ -1248,45 +1143,6 @@ namespace PoolMate.Api.Services
                 return $"Eliminated in Stage {stat.LastStageNo.Value} (Rank {rank})";
 
             return $"Eliminated (Rank {rank})";
-        }
-
-        private async Task<Match> LoadMatchForScoringAsync(int matchId, CancellationToken ct)
-        {
-            var match = await _db.Matches
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .Include(m => m.WinnerTp)
-                .Include(m => m.Table)
-                .Include(m => m.Stage)
-                .FirstOrDefaultAsync(m => m.Id == matchId, ct);
-
-            return match ?? throw new KeyNotFoundException("Match not found.");
-        }
-
-        private static int DetermineWinnerFromScores(int scoreP1, int scoreP2, int player1Id, int player2Id, int raceTo)
-        {
-            var p1Wins = scoreP1 == raceTo;
-            var p2Wins = scoreP2 == raceTo;
-
-            if (p1Wins == p2Wins)
-                throw new InvalidOperationException("Scores do not determine a unique winner.");
-
-            return p1Wins ? player1Id : player2Id;
-        }
-
-        private static bool ShouldIncludeInSummary(Match match)
-        {
-            if (match.Stage.Status == StageStatus.Completed && match.Status == MatchStatus.NotStarted)
-            {
-                var hasPlayersAssigned = match.Player1TpId.HasValue || match.Player2TpId.HasValue;
-                var hasProgress = match.ScoreP1.HasValue || match.ScoreP2.HasValue;
-                var hasSchedule = match.ScheduledUtc.HasValue;
-
-                if (!hasPlayersAssigned && !hasProgress && !hasSchedule)
-                    return false;
-            }
-
-            return true;
         }
 
         private sealed record PlacementMatch(
@@ -1465,28 +1321,6 @@ namespace PoolMate.Api.Services
             return 0;
         }
 
-        private static Dictionary<int, List<MatchSlotReference>> BuildDependencyMap(Dictionary<int, Match> matches)
-        {
-            var map = new Dictionary<int, List<MatchSlotReference>>();
-
-            foreach (var match in matches.Values)
-            {
-                if (match.Player1SourceMatchId.HasValue && match.Player1SourceType is MatchSlotSourceType.WinnerOf or MatchSlotSourceType.LoserOf)
-                {
-                    map.TryAdd(match.Player1SourceMatchId.Value, new List<MatchSlotReference>());
-                    map[match.Player1SourceMatchId.Value].Add(new MatchSlotReference(match, 1, match.Player1SourceType));
-                }
-
-                if (match.Player2SourceMatchId.HasValue && match.Player2SourceType is MatchSlotSourceType.WinnerOf or MatchSlotSourceType.LoserOf)
-                {
-                    map.TryAdd(match.Player2SourceMatchId.Value, new List<MatchSlotReference>());
-                    map[match.Player2SourceMatchId.Value].Add(new MatchSlotReference(match, 2, match.Player2SourceType));
-                }
-            }
-
-            return map;
-        }
-
         private void RewindCascade(int sourceMatchId,
             Dictionary<int, List<MatchSlotReference>> dependencyMap,
             HashSet<int> processedMatches,
@@ -1529,74 +1363,6 @@ namespace PoolMate.Api.Services
             match.WinnerTp = null;
             match.TableId = null;
             match.Table = null;
-        }
-
-        private async Task<TournamentTable> ValidateTableSelectionAsync(Match match, int tableId, CancellationToken ct)
-        {
-            var table = await _db.TournamentTables
-                .FirstOrDefaultAsync(t => t.Id == tableId, ct)
-                ?? throw new InvalidOperationException("Table not found.");
-
-            if (table.TournamentId != match.TournamentId)
-                throw new InvalidOperationException("Table belongs to another tournament.");
-
-            if (table.Status == TableStatus.Closed)
-                throw new InvalidOperationException("Table is closed.");
-
-            if (table.Status == TableStatus.InUse && match.TableId != table.Id)
-            {
-                var busy = await _db.Matches
-                    .AnyAsync(m => m.TournamentId == match.TournamentId && m.TableId == table.Id && m.Id != match.Id && m.Status != MatchStatus.Completed, ct);
-                if (busy)
-                    throw new InvalidOperationException("Table is currently assigned to another match.");
-            }
-
-            return table;
-        }
-
-        private async Task UpdateTableUsageAsync(Match match, int? previousTableId, MatchStatus previousStatus, CancellationToken ct)
-        {
-            if (previousTableId.HasValue && (previousTableId != match.TableId || previousStatus != match.Status))
-            {
-                await MarkTableOpenIfIdleAsync(previousTableId.Value, match.Id, ct);
-            }
-
-            if (!match.TableId.HasValue)
-                return;
-
-            if (match.Status == MatchStatus.InProgress)
-            {
-                await MarkTableInUseAsync(match.TableId.Value, ct);
-            }
-            else if (match.Status == MatchStatus.Completed || match.Status == MatchStatus.NotStarted)
-            {
-                await MarkTableOpenIfIdleAsync(match.TableId.Value, match.Id, ct);
-            }
-        }
-
-        private async Task MarkTableInUseAsync(int tableId, CancellationToken ct)
-        {
-            var table = await _db.TournamentTables.FirstOrDefaultAsync(t => t.Id == tableId, ct)
-                ?? throw new InvalidOperationException("Table not found.");
-
-            if (table.Status != TableStatus.InUse)
-                table.Status = TableStatus.InUse;
-        }
-
-        private async Task MarkTableOpenIfIdleAsync(int tableId, int currentMatchId, CancellationToken ct)
-        {
-            var table = await _db.TournamentTables.FirstOrDefaultAsync(t => t.Id == tableId, ct);
-            if (table is null)
-                return;
-
-            if (table.Status == TableStatus.Closed)
-                return;
-
-            var busy = await _db.Matches
-                .AnyAsync(m => m.TableId == tableId && m.Id != currentMatchId && m.Status != MatchStatus.Completed, ct);
-
-            if (!busy)
-                table.Status = TableStatus.Open;
         }
 
         private sealed record MatchSlotReference(Match Match, int SlotIndex, MatchSlotSourceType? SourceType);
@@ -2106,12 +1872,6 @@ namespace PoolMate.Api.Services
             return proportional;
         }
 
-
-        private List<Match> BuildWinnersBracket(int tournamentId, TournamentStage stage, List<PlayerSeed?> slots, CancellationToken ct)
-        {
-            return BuildWinnersBracket(tournamentId, stage, slots, ct, keepRounds: null);
-        }
-
         private List<Match> BuildWinnersBracket(int tournamentId, TournamentStage stage, List<PlayerSeed?> slots, CancellationToken ct, int? keepRounds)
         {
             var created = CreateWinnersBracketMatches(tournamentId, stage, slots, keepRounds);
@@ -2203,44 +1963,6 @@ namespace PoolMate.Api.Services
                 }
             }
 
-            return losersMatches;
-        }
-
-        // Build only the specified losers rounds (round numbers correspond to the
-        // pattern indices returned by GetLosersPattern). This allows creating
-        // non-contiguous losers rounds such as {1,2,4} when winners feed into
-        // those specific rounds only.
-        private List<Match> BuildLosersBracketSelective(int tournamentId, TournamentStage stage, int bracketSize, CancellationToken ct, List<int> roundsToCreate)
-        {
-            var losersMatches = new List<Match>();
-            var pattern = GetLosersPattern(bracketSize);
-            var losersRounds = pattern.Length;
-
-            if (roundsToCreate == null || roundsToCreate.Count == 0)
-                return losersMatches;
-
-            foreach (var round in roundsToCreate.OrderBy(r => r))
-            {
-                if (round < 1 || round > losersRounds)
-                    continue;
-
-                int matchesInRound = pattern[round - 1];
-                for (int pos = 1; pos <= matchesInRound; pos++)
-                {
-                    losersMatches.Add(new Match
-                    {
-                        TournamentId = tournamentId,
-                        StageId = stage.Id,
-                        Bracket = BracketSide.Losers,
-                        RoundNo = round,
-                        PositionInRound = pos,
-                        Status = MatchStatus.NotStarted
-                    });
-                }
-            }
-
-            _db.Matches.AddRange(losersMatches);
-            _db.SaveChanges();
             return losersMatches;
         }
 
@@ -2642,50 +2364,6 @@ namespace PoolMate.Api.Services
             match.ScoreP2 = hasPlayer2 ? 0 : 0;
 
             PropagateResult(match, matchDict);
-            return true;
-        }
-
-        private async Task<bool> IsMatchManuallyEditable(Match match, CancellationToken ct)
-        {
-            if (match.Stage is null)
-            {
-                // load stage info
-                var stage = await _db.TournamentStages.FirstOrDefaultAsync(s => s.Id == match.StageId, ct);
-                if (stage is null) return true;
-                match.Stage = stage;
-            }
-
-            if (!match.Stage.AdvanceCount.HasValue)
-                return true;
-
-            var advance = match.Stage.AdvanceCount.Value;
-            if (advance <= 0) return true;
-
-            // determine bracket size by counting first-round winners matches
-            var firstRoundCount = await _db.Matches.CountAsync(m => m.StageId == match.StageId && m.Bracket == BracketSide.Winners && m.RoundNo == 1, ct);
-            if (firstRoundCount <= 0) return true;
-
-            var bracketSize = firstRoundCount * 2;
-            var plan = CalculateTrimPlan(bracketSize, advance);
-
-            if (match.Bracket == BracketSide.Winners)
-            {
-                return match.RoundNo <= plan.WinnersRounds;
-            }
-
-            if (match.Bracket == BracketSide.Finals)
-            {
-                // finals are disabled for multi-stage stage 1 once trimming is applied
-                return false;
-            }
-
-            if (match.Bracket == BracketSide.Losers)
-            {
-                if (plan.LosersRounds == 0)
-                    return false;
-                return match.RoundNo <= plan.LosersRounds;
-            }
-
             return true;
         }
 
