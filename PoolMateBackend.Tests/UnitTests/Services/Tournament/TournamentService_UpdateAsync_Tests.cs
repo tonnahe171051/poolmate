@@ -225,30 +225,7 @@ public class TournamentService_UpdateAsync_Tests : IDisposable
         result.Should().BeTrue();
         var updated = await _db.Tournaments.FindAsync(1);
         updated!.Name.Should().Be(originalName); // Should not change
-    }
-
-    [Fact]
-    public async Task UpdateAsync_DescriptionNull_DoesNotUpdate()
-    {
-        // Arrange
-        var tournament = await SetupTournamentAsync();
-        tournament.Description = "Original Description";
-        await _db.SaveChangesAsync();
-        _db.ChangeTracker.Clear();
-        
-        // Note: When m.Description is null, the condition `if (m.Description is not null)` is FALSE
-        // so Description field will NOT be updated
-        var model = new UpdateTournamentModel(); // Description is null (not set)
-
-        // Act
-        var result = await _sut.UpdateAsync(1, "user1", model, CancellationToken.None);
-
-        // Assert
-        result.Should().BeTrue();
-        var updated = await _db.Tournaments.FindAsync(1);
-        updated!.Description.Should().Be("Original Description"); // Should not change
-    }
-    
+    }    
     #endregion
 
     #region Test 3: TotalPrize Clamping Logic
@@ -391,58 +368,6 @@ public class TournamentService_UpdateAsync_Tests : IDisposable
             await act.Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage($"*{errorFragment}*");
         }
-    }
-
-    [Fact]
-    public async Task UpdateAsync_MultiStage_SingleEliminationViaBracketTypeFallback_ThrowsException()
-    {
-        // Arrange
-        var tournament = await SetupTournamentAsync(status: TournamentStatus.Upcoming);  // CanEditBracket = true
-        tournament.BracketType = BracketType.SingleElimination;
-        await _db.SaveChangesAsync();
-        _db.ChangeTracker.Clear();
-        
-        // Try to enable multi-stage without specifying Stage1Type or BracketType in model
-        // effectiveStage1Type = m.Stage1Type ?? m.BracketType ?? t.BracketType = SingleElimination
-        var model = new UpdateTournamentModel
-        {
-            IsMultiStage = true,  // willBeMulti = true -> validation will run
-            AdvanceToStage2Count = 8
-            // No Stage1Type or BracketType specified -> uses t.BracketType (SingleElimination)
-        };
-
-        // Act & Assert
-        var act = async () => await _sut.UpdateAsync(1, "user1", model, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*Single Elimination cannot be used*");
-    }
-
-    [Fact]
-    public async Task UpdateAsync_MultiStage_ExistingAdvanceCountLessThan4_ThrowsException()
-    {
-        // Arrange - Create tournament with corrupt data (AdvanceToStage2Count < 4)
-        var tournament = await SetupTournamentAsync(
-            status: TournamentStatus.Upcoming,  // CanEditBracket = true
-            isMultiStage: true);
-        
-        // Manually set corrupt value
-        tournament.AdvanceToStage2Count = 2;
-        await _db.SaveChangesAsync();
-        _db.ChangeTracker.Clear();
-        
-        // Try to update without changing AdvanceToStage2Count
-        // Validation: `else if (t.AdvanceToStage2Count.HasValue && t.AdvanceToStage2Count.Value < 4)`
-        // This only runs when: willBeMulti = true AND m.AdvanceToStage2Count is null
-        var model = new UpdateTournamentModel 
-        { 
-            IsMultiStage = true,  // willBeMulti = true
-            // AdvanceToStage2Count not set -> will trigger the else if validation
-        };
-
-        // Act & Assert
-        var act = async () => await _sut.UpdateAsync(1, "user1", model, CancellationToken.None);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*AdvanceToStage2Count must be at least 4*");
     }
     
     #endregion

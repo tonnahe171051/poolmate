@@ -5,6 +5,7 @@ using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Admin.Player;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
+using TournamentModel = PoolMate.Api.Models.Tournament;
 
 namespace PoolMateBackend.Tests.UnitTests.Services.AdminPlayer
 {
@@ -84,7 +85,7 @@ namespace PoolMateBackend.Tests.UnitTests.Services.AdminPlayer
 
             if (withRecentTournament || withOldTournament || tournamentDate.HasValue)
             {
-                var tournament = new Tournament
+                var tournament = new TournamentModel
                 {
                     Name = $"Tournament for Player {id}",
                     OwnerUserId = "owner-1",
