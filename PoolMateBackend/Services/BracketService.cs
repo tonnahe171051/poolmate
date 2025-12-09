@@ -974,7 +974,6 @@ namespace PoolMate.Api.Services
             var championIds = matches
                 .Where(m => m.Status == MatchStatus.Completed && m.WinnerTpId.HasValue)
                 .Where(m => m.NextWinnerMatchId == null && m.NextLoserMatchId == null)
-                .Where(m => m.Bracket == BracketSide.Knockout || m.Bracket == BracketSide.Finals)
                 .Select(m => m.WinnerTpId!.Value)
                 .ToHashSet();
 
