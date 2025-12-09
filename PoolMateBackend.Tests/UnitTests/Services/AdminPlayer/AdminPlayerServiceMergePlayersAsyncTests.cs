@@ -6,6 +6,7 @@ using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Admin.Player;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
+using TournamentModel = PoolMate.Api.Models.Tournament;
 
 namespace PoolMateBackend.Tests.UnitTests.Services.AdminPlayer
 {
@@ -77,9 +78,9 @@ namespace PoolMateBackend.Tests.UnitTests.Services.AdminPlayer
             return player;
         }
 
-        private async Task<Tournament> CreateTournamentAsync(int id, string name = "Test Tournament")
+        private async Task<TournamentModel> CreateTournamentAsync(int id, string name = "Test Tournament")
         {
-            var tournament = new Tournament
+            var tournament = new TournamentModel
             {
                 Id = id,
                 Name = name,
