@@ -15,11 +15,19 @@ namespace PoolMate.Api.Controllers;
 public class TournamentsController : ControllerBase
 {
     private readonly ITournamentService _svc;
+    private readonly ITournamentPlayerService _playerSvc;
+    private readonly ITournamentTableService _tableSvc;
     private readonly IBracketService _bracket;
 
-    public TournamentsController(ITournamentService svc, IBracketService bracket)
+    public TournamentsController(
+        ITournamentService svc,
+        ITournamentPlayerService playerSvc,
+        ITournamentTableService tableSvc,
+        IBracketService bracket)
     {
         _svc = svc;
+        _playerSvc = playerSvc;
+        _tableSvc = tableSvc;
         _bracket = bracket;
     }
 
@@ -157,7 +165,7 @@ public class TournamentsController : ControllerBase
 
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
-            var tp = await _svc.AddTournamentPlayerAsync(id, userId, model, ct);
+            var tp = await _playerSvc.AddTournamentPlayerAsync(id, userId, model, ct);
             if (tp is null) return NotFound(new { message = "Tournament not found or not owned by you." });
 
             return Ok(new { id = tp.Id });
@@ -177,7 +185,7 @@ public class TournamentsController : ControllerBase
         try
         {
             var ownerUserId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            var resp = await _svc.BulkAddPlayersPerLineAsync(id, ownerUserId, model, ct);
+            var resp = await _playerSvc.BulkAddPlayersPerLineAsync(id, ownerUserId, model, ct);
             return Ok(resp);
         }
         catch (InvalidOperationException ex)
@@ -194,7 +202,7 @@ public class TournamentsController : ControllerBase
     public async Task<IActionResult> SearchPlayers([FromQuery] string q, [FromQuery] int limit = 10,
         CancellationToken ct = default)
     {
-        var items = await _svc.SearchPlayersAsync(q, limit, ct);
+        var items = await _playerSvc.SearchPlayersAsync(q, limit, ct);
         return Ok(items);
     }
 
@@ -203,7 +211,7 @@ public class TournamentsController : ControllerBase
         CancellationToken ct)
     {
         var uid = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var ok = await _svc.LinkTournamentPlayerAsync(tournamentId, tpId, uid, m, ct);
+        var ok = await _playerSvc.LinkTournamentPlayerAsync(tournamentId, tpId, uid, m, ct);
         if (!ok) return BadRequest(new { message = "Link failed." });
         return Ok(new { message = "Linked." });
     }
@@ -212,7 +220,7 @@ public class TournamentsController : ControllerBase
     public async Task<IActionResult> UnlinkPlayer(int tournamentId, int tpId, CancellationToken ct)
     {
         var uid = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var ok = await _svc.UnlinkTournamentPlayerAsync(tournamentId, tpId, uid, ct);
+        var ok = await _playerSvc.UnlinkTournamentPlayerAsync(tournamentId, tpId, uid, ct);
         if (!ok) return BadRequest(new { message = "Unlink failed." });
         return Ok(new { message = "Unlinked." });
     }
@@ -222,7 +230,7 @@ public class TournamentsController : ControllerBase
         [FromBody] CreateProfileFromSnapshotRequest m, CancellationToken ct)
     {
         var uid = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var playerId = await _svc.CreateProfileFromSnapshotAndLinkAsync(tournamentId, tpId, uid, m, ct);
+        var playerId = await _playerSvc.CreateProfileFromSnapshotAndLinkAsync(tournamentId, tpId, uid, m, ct);
         if (playerId is null) return BadRequest(new { message = "Create profile failed." });
         return Ok(new { playerId });
     }
@@ -234,7 +242,7 @@ public class TournamentsController : ControllerBase
         [FromQuery] string? searchName = null,
         CancellationToken ct = default)
     {
-        var players = await _svc.GetTournamentPlayersAsync(id, searchName, ct);
+        var players = await _playerSvc.GetTournamentPlayersAsync(id, searchName, ct);
         return Ok(players);
     }
 
@@ -264,7 +272,7 @@ public class TournamentsController : ControllerBase
                 return BadRequest(ModelState);
 
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            var success = await _svc.UpdateTournamentPlayerAsync(tournamentId, tpId, userId, model, ct);
+            var success = await _playerSvc.UpdateTournamentPlayerAsync(tournamentId, tpId, userId, model, ct);
 
             if (!success)
                 return NotFound(new { message = "Tournament player not found or you don't have permission." });
@@ -288,7 +296,7 @@ public class TournamentsController : ControllerBase
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
-        var table = await _svc.AddTournamentTableAsync(id, userId, model, ct);
+        var table = await _tableSvc.AddTournamentTableAsync(id, userId, model, ct);
         if (table is null)
             return NotFound(new { message = "Tournament not found or not owned by you." });
 
@@ -318,7 +326,7 @@ public class TournamentsController : ControllerBase
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
-        var result = await _svc.AddMultipleTournamentTablesAsync(id, userId, model, ct);
+        var result = await _tableSvc.AddMultipleTournamentTablesAsync(id, userId, model, ct);
         if (result is null)
             return NotFound(new { message = "Tournament not found or not owned by you." });
 
@@ -342,7 +350,7 @@ public class TournamentsController : ControllerBase
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
-        var success = await _svc.UpdateTournamentTableAsync(tournamentId, tableId, userId, model, ct);
+        var success = await _tableSvc.UpdateTournamentTableAsync(tournamentId, tableId, userId, model, ct);
         if (!success)
             return NotFound(new { message = "Table not found or tournament not owned by you." });
 
@@ -366,7 +374,7 @@ public class TournamentsController : ControllerBase
 
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
-            var result = await _svc.DeleteTournamentTablesAsync(tournamentId, userId, model, ct);
+            var result = await _tableSvc.DeleteTournamentTablesAsync(tournamentId, userId, model, ct);
             if (result is null)
                 return NotFound(new { message = "Tournament not found or not owned by you." });
 
@@ -390,7 +398,7 @@ public class TournamentsController : ControllerBase
         int id,
         CancellationToken ct = default)
     {
-        var tables = await _svc.GetTournamentTablesAsync(id, ct);
+        var tables = await _tableSvc.GetTournamentTablesAsync(id, ct);
         return Ok(tables);
     }
 
@@ -407,7 +415,7 @@ public class TournamentsController : ControllerBase
 
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
-            var result = await _svc.DeleteTournamentPlayersAsync(tournamentId, userId, model, ct);
+            var result = await _playerSvc.DeleteTournamentPlayersAsync(tournamentId, userId, model, ct);
             if (result is null)
                 return NotFound(new { message = "Tournament not found or not owned by you." });
 

@@ -21,16 +21,16 @@ namespace PoolMate.Api.Controllers
     {
         private readonly ApplicationDbContext _db;
         private readonly ITableTokenService _tableTokenService;
-        private readonly IBracketService _bracketService;
+        private readonly IMatchService _matchService;
 
         public LiveScoreController(
             ApplicationDbContext db,
             ITableTokenService tableTokenService,
-            IBracketService bracketService)
+            IMatchService matchService)
         {
             _db = db;
             _tableTokenService = tableTokenService;
-            _bracketService = bracketService;
+            _matchService = matchService;
         }
 
         [HttpPost("tournaments/{tournamentId:int}/tables/{tableId:int}/token")]
@@ -85,7 +85,7 @@ namespace PoolMate.Api.Controllers
             if (matchId is null)
                 return NoContent();
 
-            var matchDto = await _bracketService.GetMatchAsync(matchId.Value, ct);
+            var matchDto = await _matchService.GetMatchAsync(matchId.Value, ct);
             return Ok(matchDto);
         }
 
@@ -102,7 +102,7 @@ namespace PoolMate.Api.Controllers
             try
             {
                 var actor = await ResolveScoringContextAsync(matchId, ct);
-                var response = await _bracketService.UpdateLiveScoreAsync(matchId, request, actor, ct);
+                var response = await _matchService.UpdateLiveScoreAsync(matchId, request, actor, ct);
                 return Ok(response);
             }
             catch (UnauthorizedAccessException ex)
@@ -149,7 +149,7 @@ namespace PoolMate.Api.Controllers
             try
             {
                 var actor = await ResolveScoringContextAsync(matchId, ct);
-                var response = await _bracketService.CompleteMatchAsync(matchId, request, actor, ct);
+                var response = await _matchService.CompleteMatchAsync(matchId, request, actor, ct);
                 return Ok(response);
             }
             catch (UnauthorizedAccessException ex)
