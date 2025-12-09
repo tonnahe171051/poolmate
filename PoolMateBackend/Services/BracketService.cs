@@ -908,6 +908,12 @@ namespace PoolMate.Api.Services
 
         public async Task<IReadOnlyList<TournamentPlayerStatsDto>> GetPlayerStatsAsync(int tournamentId, CancellationToken ct)
         {
+            var tournamentState = await _db.Tournaments
+                .Where(t => t.Id == tournamentId)
+                .Select(t => new { t.IsStarted })
+                .FirstOrDefaultAsync(ct)
+                ?? throw new KeyNotFoundException("Tournament not found.");
+
             var players = await _db.TournamentPlayers
                 .Where(tp => tp.TournamentId == tournamentId)
                 .Select(tp => new
@@ -934,7 +940,7 @@ namespace PoolMate.Api.Services
                     RacksWon = 0,
                     RacksLost = 0,
                     LastStageNo = null,
-                    IsEliminated = true
+                    IsEliminated = false
                 });
 
             var matches = await _db.Matches
@@ -1006,24 +1012,12 @@ namespace PoolMate.Api.Services
                 }
             }
 
-            foreach (var id in activePlayers)
-            {
-                if (stats.TryGetValue(id, out var stat))
-                    stat.IsEliminated = false;
-            }
-
-            var champions = matches
+            var championIds = matches
                 .Where(m => m.Status == MatchStatus.Completed && m.WinnerTpId.HasValue)
                 .Where(m => m.NextWinnerMatchId == null && m.NextLoserMatchId == null)
                 .Where(m => m.Bracket == BracketSide.Knockout || m.Bracket == BracketSide.Finals)
                 .Select(m => m.WinnerTpId!.Value)
-                .Distinct();
-
-            foreach (var championId in champions)
-            {
-                if (stats.TryGetValue(championId, out var stat))
-                    stat.IsEliminated = false;
-            }
+                .ToHashSet();
 
             var placementMatches = matches
                 .Select(m => new PlacementMatch(
@@ -1040,6 +1034,19 @@ namespace PoolMate.Api.Services
                 .ToList();
 
             _ = ApplyPlacements(placementMatches, stats);
+
+            foreach (var stat in stats.Values)
+            {
+                if (!tournamentState.IsStarted || stat.MatchesPlayed == 0)
+                {
+                    stat.IsEliminated = false;
+                    continue;
+                }
+
+                var isActive = activePlayers.Contains(stat.TournamentPlayerId);
+                var isChampion = championIds.Contains(stat.TournamentPlayerId);
+                stat.IsEliminated = !(isActive || isChampion);
+            }
 
             return stats.Values
                 .OrderBy(s => s.PlacementRank ?? int.MaxValue)
