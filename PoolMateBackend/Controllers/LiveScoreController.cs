@@ -193,7 +193,11 @@ namespace PoolMate.Api.Controllers
             if (table.TournamentId != tournamentId)
                 throw new KeyNotFoundException();
 
-            if (User?.Identity?.IsAuthenticated == true)
+            // Kiểm tra xem user đã đăng nhập (và không phải là table token)
+            var scope = User?.FindFirstValue("scope");
+            var isTableToken = !string.IsNullOrEmpty(scope) && scope == "table-scoring";
+            
+            if (User?.Identity?.IsAuthenticated == true && !isTableToken)
                 return table;
 
             var token = ExtractBearerToken();
@@ -218,7 +222,11 @@ namespace PoolMate.Api.Controllers
 
         private async Task<ScoringContext> ResolveScoringContextAsync(int matchId, CancellationToken ct)
         {
-            if (User?.Identity?.IsAuthenticated == true)
+            // Kiểm tra xem có phải là user token không (không phải table token)
+            var scope = User?.FindFirstValue("scope");
+            var isTableToken = !string.IsNullOrEmpty(scope) && scope == "table-scoring";
+            
+            if (User?.Identity?.IsAuthenticated == true && !isTableToken)
             {
                 var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (string.IsNullOrWhiteSpace(userId))
