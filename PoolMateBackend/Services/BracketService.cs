@@ -1741,7 +1741,6 @@ namespace PoolMate.Api.Services
                         Player1SourceType = p1Source,
                         Player2SourceType = p2Source,
                         Status = MatchStatus.NotStarted,
-                        RowVersion = new byte[8]
                     });
                 }
 
@@ -1916,7 +1915,6 @@ namespace PoolMate.Api.Services
                         Player1SourceType = roundNo == 1 ? MatchSlotSourceType.Seed : null,
                         Player2SourceType = roundNo == 1 ? MatchSlotSourceType.Seed : null,
                         Status = MatchStatus.NotStarted,
-                        RowVersion = new byte[8]
                     });
                 }
 
@@ -1960,7 +1958,6 @@ namespace PoolMate.Api.Services
                         RoundNo = round,
                         PositionInRound = pos,
                         Status = MatchStatus.NotStarted,
-                        RowVersion = new byte[8]
                     });
                 }
             }
@@ -1988,7 +1985,6 @@ namespace PoolMate.Api.Services
                     RoundNo = 1,
                     PositionInRound = 1,
                     Status = MatchStatus.NotStarted,
-                    RowVersion = new byte[8]
                 }
             };
         }
