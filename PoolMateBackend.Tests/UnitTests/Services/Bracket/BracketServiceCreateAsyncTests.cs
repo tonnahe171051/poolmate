@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Moq;
 using PoolMate.Api.Common;
 using PoolMate.Api.Data;
@@ -16,6 +17,35 @@ using TournamentModel = PoolMate.Api.Models.Tournament;
 
 namespace PoolMateBackend.Tests.UnitTests.Services.Bracket
 {
+    // Interceptor to automatically set RowVersion for Match entities in tests
+    public class RowVersionInterceptor : SaveChangesInterceptor
+    {
+        public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
+        {
+            SetRowVersionForMatches(eventData.Context);
+            return base.SavingChanges(eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            SetRowVersionForMatches(eventData.Context);
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+
+        private void SetRowVersionForMatches(DbContext context)
+        {
+            if (context == null) return;
+
+            var matchEntries = context.ChangeTracker.Entries<PoolMate.Api.Models.Match>()
+                .Where(e => e.State == EntityState.Added && e.Entity.RowVersion == null);
+
+            foreach (var entry in matchEntries)
+            {
+                entry.Entity.RowVersion = new byte[8];
+            }
+        }
+    }
+
     public class BracketServiceCreateAsyncTests : IDisposable
     {
         private readonly ApplicationDbContext _context;
@@ -26,6 +56,7 @@ namespace PoolMateBackend.Tests.UnitTests.Services.Bracket
         {
             var options = new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+                .AddInterceptors(new RowVersionInterceptor())
                 .Options;
 
             _context = new ApplicationDbContext(options);
