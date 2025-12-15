@@ -6,5 +6,5 @@ public class MergePlayerRequestDto
     public int TargetPlayerId { get; set; }
     
     /// Danh sách ID của các hồ sơ RÁC (Sẽ bị xóa sau khi gộp)
-    public List<int> SourcePlayerIds { get; set; } = new();
+    public int SourcePlayerId { get; set; }
 }

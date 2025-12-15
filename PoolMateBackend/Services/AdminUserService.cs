@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using PoolMate.Api.Common;
 using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Admin.Users;
 using PoolMate.Api.Dtos.Auth;
+using PoolMate.Api.Hubs;
 using PoolMate.Api.Models;
 using System.Text;
 using PoolMate.Api.Dtos.Admin.Player;
@@ -17,17 +19,23 @@ public class AdminUserService : IAdminUserService
     private readonly RoleManager<IdentityRole> _roleManager;
     private readonly ApplicationDbContext _db;
     private readonly ILogger<AdminUserService> _logger;
+    private readonly IBannedUserCacheService _bannedUserCache;
+    private readonly IHubContext<AppHub> _hubContext;
 
     public AdminUserService(
         UserManager<ApplicationUser> userManager,
         RoleManager<IdentityRole> roleManager,
         ApplicationDbContext db,
-        ILogger<AdminUserService> logger)
+        ILogger<AdminUserService> logger,
+        IBannedUserCacheService bannedUserCache,
+        IHubContext<AppHub> hubContext)
     {
         _userManager = userManager;
         _roleManager = roleManager;
         _db = db;
         _logger = logger;
+        _bannedUserCache = bannedUserCache;
+        _hubContext = hubContext;
     }
 
     public async Task<Response> GetUsersAsync(AdminUserFilterDto filter, CancellationToken ct)
@@ -544,11 +552,15 @@ public class AdminUserService : IAdminUserService
         }
     }
 
+
     public async Task<Response> DeactivateUserAsync(string userId, string adminId, CancellationToken ct)
     {
         try
         {
-            // 👇 1. CHECK LOGIC: Không cho phép tự khóa chính mình
+            // ═══════════════════════════════════════════════════════════════════
+            // CHECK 1: SELF-BAN PREVENTION
+            // Admin không được tự khóa chính mình
+            // ═══════════════════════════════════════════════════════════════════
             if (userId == adminId)
             {
                 _logger.LogWarning("Admin {AdminId} attempted to deactivate themselves.", adminId);
@@ -561,44 +573,137 @@ public class AdminUserService : IAdminUserService
                 return Response.Error("User not found");
             }
 
-            // 2. Kiểm tra xem user đã bị khóa trước đó chưa
-            if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow)
+            // ═══════════════════════════════════════════════════════════════════
+            // CHECK 2: ALREADY LOCKED OUT
+            // ═══════════════════════════════════════════════════════════════════
+            var isAlreadyLockedOut = await _userManager.IsLockedOutAsync(user);
+            if (isAlreadyLockedOut)
             {
                 return Response.Error("User is already deactivated");
             }
 
-            // 3. Bảo vệ tài khoản VIP/Admin (nếu LockoutEnabled = false)
-            if (!user.LockoutEnabled)
+            // ═══════════════════════════════════════════════════════════════════
+            // CHECK 3: ROLE-BASED PROTECTION (STRICT MODE)
+            // Logic: Nếu target là Admin -> CHẶN TUYỆT ĐỐI.
+            // Không sử dụng Force flag ở đây. Để khóa Admin, cần quy trình khác
+            // hoặc thao tác trực tiếp vào DB để đảm bảo an toàn.
+            // ═══════════════════════════════════════════════════════════════════
+            var userRoles = await _userManager.GetRolesAsync(user);
+
+            // Kiểm tra xem user có phải là Admin không
+            var isAdmin = userRoles.Any(r => r.Equals("Admin", StringComparison.OrdinalIgnoreCase));
+
+            if (isAdmin)
             {
                 _logger.LogWarning(
-                    "Attempt to deactivate protected account: User {UserId} ({UserName}). Request denied.",
+                    "Attempt to deactivate protected Admin account: User {UserId} ({UserName}). Request denied.",
                     userId, user.UserName);
+
+                // Trả về lỗi ngay lập tức
                 return Response.Error(
-                    "Cannot deactivate this user. This is a protected account with lockout protection enabled.");
+                    "Cannot deactivate this user. Admin accounts are protected and cannot be deactivated via this API.");
             }
 
-            // 4. THỰC HIỆN KHÓA
-            user.LockoutEnd = DateTimeOffset.MaxValue;
-            var result = await _userManager.UpdateSecurityStampAsync(user);
-            if (!result.Succeeded)
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 1: ENSURE LOCKOUT IS ENABLED
+            // ═══════════════════════════════════════════════════════════════════
+            if (!user.LockoutEnabled)
             {
-                var errors = string.Join(", ", result.Errors.Select(e => e.Description));
-                _logger.LogError("Failed to deactivate user {UserId}: {Errors}", userId, errors);
+                var enableLockoutResult = await _userManager.SetLockoutEnabledAsync(user, true);
+                if (!enableLockoutResult.Succeeded)
+                {
+                    var errors = string.Join(", ", enableLockoutResult.Errors.Select(e => e.Description));
+                    _logger.LogError("Failed to enable lockout for user {UserId}: {Errors}", userId, errors);
+                    return Response.Error($"Failed to prepare user for deactivation: {errors}");
+                }
+
+                _logger.LogInformation("Enabled lockout for user {UserId} before deactivation.", userId);
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 2: SET LOCKOUT END DATE (Permanent)
+            // ═══════════════════════════════════════════════════════════════════
+            var setLockoutResult = await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
+            if (!setLockoutResult.Succeeded)
+            {
+                var errors = string.Join(", ", setLockoutResult.Errors.Select(e => e.Description));
+                _logger.LogError("Failed to set lockout end date for user {UserId}: {Errors}", userId, errors);
                 return Response.Error($"Failed to deactivate user: {errors}");
             }
 
-            // 5. Log & Return
-            var roles = await _userManager.GetRolesAsync(user);
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 3: UPDATE SECURITY STAMP (Invalidate Tokens)
+            // ═══════════════════════════════════════════════════════════════════
+            var updateStampResult = await _userManager.UpdateSecurityStampAsync(user);
+            if (!updateStampResult.Succeeded)
+            {
+                var errors = string.Join(", ", updateStampResult.Errors.Select(e => e.Description));
+                _logger.LogError("Failed to update security stamp for user {UserId}: {Errors}", userId, errors);
+                // Note: Continue - cache ban will still provide real-time protection
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 4: REAL-TIME CACHE BAN
+            // ═══════════════════════════════════════════════════════════════════
+            var cacheResult = await _bannedUserCache.BanUserAsync(
+                userId,
+                $"Deactivated by Admin {adminId}",
+                ct);
+
+            if (!cacheResult)
+            {
+                _logger.LogWarning(
+                    "Failed to add user {UserId} to banned cache. Real-time lockout may be delayed.",
+                    userId);
+            }
+            else
+            {
+                _logger.LogInformation("User {UserId} added to real-time ban cache.", userId);
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 5: SIGNALR NOTIFICATION (Real-time UX)
+            // ═══════════════════════════════════════════════════════════════════
+            var signalRNotified = false;
+            try
+            {
+                await _hubContext.Clients.User(userId).SendAsync(
+                    AppHubEvents.ReceiveLogoutCommand,
+                    new
+                    {
+                        message = "Your account has been deactivated by an administrator.",
+                        reason = "Account deactivation",
+                        timestamp = DateTimeOffset.UtcNow,
+                        requireLogout = true
+                    },
+                    ct); // Đừng quên truyền CancellationToken
+
+                signalRNotified = true;
+                _logger.LogInformation("SignalR logout command sent to user {UserId}.", userId);
+            }
+            catch (Exception signalREx)
+            {
+                _logger.LogWarning(signalREx, "Failed to send SignalR logout command to user {UserId}.", userId);
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 6: LOG SUCCESS AND RETURN
+            // ═══════════════════════════════════════════════════════════════════
             _logger.LogInformation(
-                "User {UserId} ({UserName}) has been deactivated successfully by Admin {AdminId}. Security stamp updated.",
-                userId, user.UserName, adminId);
+                "User {UserId} ({UserName}) deactivated. Cache={CacheActive}, DB=Active, SignalR={SignalRNotified}",
+                userId, user.UserName, cacheResult, signalRNotified);
 
             return Response.Ok(new
             {
-                message = "User deactivated successfully. All active sessions have been invalidated.",
+                message = "User deactivated successfully. Account is blocked immediately.",
                 userId = userId,
                 userName = user.UserName,
-                deactivatedAt = DateTimeOffset.UtcNow
+                userRoles = userRoles,
+                deactivatedAt = DateTimeOffset.UtcNow,
+                deactivatedBy = adminId,
+                lockoutEnd = DateTimeOffset.MaxValue,
+                realTimeBanActive = cacheResult,
+                signalRNotified = signalRNotified
             });
         }
         catch (Exception ex)
@@ -608,45 +713,141 @@ public class AdminUserService : IAdminUserService
         }
     }
 
+    
     public async Task<Response> ReactivateUserAsync(string userId, CancellationToken ct)
     {
         try
         {
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 1: FIND USER
+            // ═══════════════════════════════════════════════════════════════════
             var user = await _userManager.FindByIdAsync(userId);
             if (user == null)
             {
                 return Response.Error("User not found");
             }
 
-            // 1. Kiểm tra user có đang bị deactivate không
-            if (!user.LockoutEnd.HasValue || user.LockoutEnd.Value <= DateTimeOffset.UtcNow)
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 2: CHECK IF USER IS ACTUALLY LOCKED OUT
+            // 
+            // ✅ Using Standard Identity API instead of manual date check
+            // IsLockedOutAsync properly checks both LockoutEnabled AND LockoutEnd
+            // ═══════════════════════════════════════════════════════════════════
+            var isCurrentlyLockedOut = await _userManager.IsLockedOutAsync(user);
+            if (!isCurrentlyLockedOut)
             {
                 return Response.Error("User is not currently deactivated");
             }
 
-            // 2. Lấy roles để log (trước khi update)
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 3: GET ROLES FOR LOGGING (Before any updates)
+            // ═══════════════════════════════════════════════════════════════════
             var roles = await _userManager.GetRolesAsync(user);
-            // 3. THỰC HIỆN MỞ KHÓA
-            user.LockoutEnd = null;
-            var result = await _userManager.UpdateSecurityStampAsync(user);
-            if (!result.Succeeded)
+            var previousLockoutEnd = user.LockoutEnd;
+            var previousAccessFailedCount = user.AccessFailedCount;
+
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 4: UNLOCK USER (Using Standard Identity API)
+            // 
+            // ✅ SetLockoutEndDateAsync(user, null) is the proper way to unlock
+            // - Handles all internal validations and triggers
+            // - Sets LockoutEnd to null, effectively removing the lockout
+            // ═══════════════════════════════════════════════════════════════════
+            var unlockResult = await _userManager.SetLockoutEndDateAsync(user, null);
+            if (!unlockResult.Succeeded)
             {
-                var errors = string.Join(", ", result.Errors.Select(e => e.Description));
-                _logger.LogError("Failed to reactivate user {UserId}: {Errors}", userId, errors);
+                var errors = string.Join(", ", unlockResult.Errors.Select(e => e.Description));
+                _logger.LogError("Failed to unlock user {UserId}: {Errors}", userId, errors);
                 return Response.Error($"Failed to reactivate user: {errors}");
             }
 
-            // 4. Log & Return
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 5: RESET ACCESS FAILED COUNT (Critical for Clean Slate)
+            // 
+            // ⚠️ WHY THIS IS CRUCIAL:
+            // - If user had failed login attempts before being banned, 
+            //   AccessFailedCount might be close to the lockout threshold
+            // - Without reset, user could be immediately locked out again
+            //   on their first failed login attempt after reactivation
+            // - ResetAccessFailedCountAsync sets count to 0
+            // ═══════════════════════════════════════════════════════════════════
+            var resetCountResult = await _userManager.ResetAccessFailedCountAsync(user);
+            if (!resetCountResult.Succeeded)
+            {
+                var errors = string.Join(", ", resetCountResult.Errors.Select(e => e.Description));
+                _logger.LogWarning(
+                    "Failed to reset access failed count for user {UserId}: {Errors}. " +
+                    "User may still be at risk of immediate re-lockout.",
+                    userId, errors);
+                // Note: Don't fail the operation - lockout is already removed
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 6: UPDATE SECURITY STAMP (Invalidate all tokens)
+            // 
+            // ✅ WHY THIS IS IMPORTANT:
+            // - Forces user to re-authenticate with fresh credentials
+            // - Invalidates any tokens that might have been issued during lockout
+            // - Ensures clean session state
+            // ═══════════════════════════════════════════════════════════════════
+            var stampResult = await _userManager.UpdateSecurityStampAsync(user);
+            if (!stampResult.Succeeded)
+            {
+                var errors = string.Join(", ", stampResult.Errors.Select(e => e.Description));
+                _logger.LogWarning(
+                    "Failed to update security stamp for user {UserId}: {Errors}. " +
+                    "Old tokens may remain valid until expiration.",
+                    userId, errors);
+                // Note: Don't fail - lockout is already removed
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 7: REMOVE FROM BANNED CACHE (Real-time unban)
+            // 
+            // ✅ WHY THIS IS ESSENTIAL:
+            // - BannedUserMiddleware checks this cache on every request
+            // - Without removal, user would still be blocked at middleware level
+            // - Must be removed for immediate access restoration
+            // ═══════════════════════════════════════════════════════════════════
+            var cacheRemoved = await _bannedUserCache.UnbanUserAsync(userId, ct);
+            if (!cacheRemoved)
+            {
+                _logger.LogWarning(
+                    "Failed to remove user {UserId} from banned cache. " +
+                    "User may need to wait for cache TTL to expire.",
+                    userId);
+            }
+
+            // ═══════════════════════════════════════════════════════════════════
+            // STEP 8: LOG SUCCESS AND RETURN
+            // ═══════════════════════════════════════════════════════════════════
             _logger.LogInformation(
-                "User {UserId} ({UserName}, roles: {Roles}) has been reactivated successfully. Security stamp refreshed.",
-                userId, user.UserName, string.Join(", ", roles));
+                "User {UserId} ({UserName}, roles: [{Roles}]) has been reactivated successfully. " +
+                "Previous state: LockoutEnd={PreviousLockout}, AccessFailedCount={PreviousFailedCount}. " +
+                "Current state: Unlocked, AccessFailedCount=0, SecurityStamp={StampUpdated}, CacheCleared={CacheCleared}",
+                userId, user.UserName, string.Join(", ", roles),
+                previousLockoutEnd, previousAccessFailedCount,
+                stampResult.Succeeded, cacheRemoved);
 
             return Response.Ok(new
             {
-                message = "User reactivated successfully. User needs to login again.",
+                message = "User reactivated successfully. User must login with fresh credentials.",
                 userId = userId,
                 userName = user.UserName,
-                reactivatedAt = DateTimeOffset.UtcNow
+                userRoles = roles,
+                reactivatedAt = DateTimeOffset.UtcNow,
+                previousState = new
+                {
+                    lockoutEnd = previousLockoutEnd,
+                    accessFailedCount = previousAccessFailedCount
+                },
+                currentState = new
+                {
+                    lockoutEnd = (DateTimeOffset?)null,
+                    accessFailedCount = 0,
+                    securityStampUpdated = stampResult.Succeeded,
+                    cacheCleared = cacheRemoved
+                }
             });
         }
         catch (Exception ex)
@@ -656,7 +857,8 @@ public class AdminUserService : IAdminUserService
         }
     }
 
-    public async Task<Response> BulkDeactivateUsersAsync(BulkDeactivateUsersDto request, string adminId, CancellationToken ct)
+    public async Task<Response> BulkDeactivateUsersAsync(BulkDeactivateUsersDto request, string adminId,
+        CancellationToken ct)
     {
         try
         {
@@ -664,24 +866,33 @@ public class AdminUserService : IAdminUserService
             var successCount = 0;
             var failedCount = 0;
             var skippedCount = 0;
+
             foreach (var userId in request.UserIds)
             {
                 try
                 {
+                    // ═══════════════════════════════════════════════════════════════
+                    // CHECK 1: SELF-BAN PREVENTION (Giữ nguyên)
+                    // Admin không được phép tự khóa chính mình
+                    // ═══════════════════════════════════════════════════════════════
                     if (userId == adminId)
                     {
                         results.Add(new BulkOperationItemResultDto
                         {
                             UserId = userId,
                             Success = false,
-                            ErrorMessage = "Cannot deactivate your own account",
+                            ErrorMessage = "Cannot deactivate your own account", // Thông báo lỗi rõ ràng
                             Status = "Skipped"
                         });
                         skippedCount++;
-                        _logger.LogWarning("Admin {AdminId} attempted to deactivate themselves in bulk operation.", adminId);
-                        continue; 
+                        _logger.LogWarning("Admin {AdminId} attempted to deactivate themselves in bulk operation.",
+                            adminId);
+                        continue;
                     }
 
+                    // ═══════════════════════════════════════════════════════════════
+                    // CHECK 2: USER EXISTS
+                    // ═══════════════════════════════════════════════════════════════
                     var user = await _userManager.FindByIdAsync(userId);
                     if (user == null)
                     {
@@ -696,8 +907,11 @@ public class AdminUserService : IAdminUserService
                         continue;
                     }
 
-                    // 1. Check: Đã bị khóa chưa?
-                    if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow)
+                    // ═══════════════════════════════════════════════════════════════
+                    // CHECK 3: ALREADY LOCKED OUT
+                    // ═══════════════════════════════════════════════════════════════
+                    var isAlreadyLockedOut = await _userManager.IsLockedOutAsync(user);
+                    if (isAlreadyLockedOut)
                     {
                         results.Add(new BulkOperationItemResultDto
                         {
@@ -711,55 +925,144 @@ public class AdminUserService : IAdminUserService
                         continue;
                     }
 
-                    // 2. Check: Tài khoản VIP (Protected)
-                    if (!user.LockoutEnabled && !request.Force)
+                    // ═══════════════════════════════════════════════════════════════
+                    // CHECK 4: ROLE-BASED PROTECTION (Đã loại bỏ Force Flag)
+                    // 
+                    // Logic mới (An toàn tuyệt đối):
+                    // - Nếu target là Admin -> Luôn luôn BỎ QUA (Skipped).
+                    // - Không quan tâm cờ Force nữa.
+                    // - Lý do: Chức năng Bulk rất dễ bấm nhầm, nên cấm tuyệt đối việc
+                    //   khóa Admin ở đây. Nếu muốn khóa Admin, phải dùng chức năng Single.
+                    // ═══════════════════════════════════════════════════════════════
+                    var userRoles = await _userManager.GetRolesAsync(user);
+                    var isAdmin = userRoles.Any(r => r.Equals("Admin", StringComparison.OrdinalIgnoreCase));
+
+                    if (isAdmin)
                     {
                         results.Add(new BulkOperationItemResultDto
                         {
                             UserId = userId,
                             UserName = user.UserName,
                             Success = false,
-                            ErrorMessage = "Protected account - use Force option to deactivate",
+                            ErrorMessage =
+                                "Skipped: Target is Admin. Admin accounts cannot be deactivated in bulk mode.",
                             Status = "Skipped"
                         });
                         skippedCount++;
+                        _logger.LogWarning("Bulk deactivate skipped Admin user {UserId}. Protected by role.", userId);
                         continue;
                     }
 
-                    // 3. THỰC HIỆN KHÓA (REAL-TIME)
-                    user.LockoutEnd = DateTimeOffset.MaxValue;
-                    var result = await _userManager.UpdateSecurityStampAsync(user);
-
-                    if (result.Succeeded)
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 1: ENSURE LOCKOUT IS ENABLED
+                    // ═══════════════════════════════════════════════════════════════
+                    if (!user.LockoutEnabled)
                     {
-                        results.Add(new BulkOperationItemResultDto
+                        var enableResult = await _userManager.SetLockoutEnabledAsync(user, true);
+                        if (!enableResult.Succeeded)
                         {
-                            UserId = userId,
-                            UserName = user.UserName,
-                            Success = true,
-                            Status = "Success"
-                        });
-                        successCount++;
-
-                        _logger.LogInformation("User {UserId} deactivated via bulk operation by Admin {AdminId}.", userId, adminId);
+                            var errors = string.Join(", ", enableResult.Errors.Select(e => e.Description));
+                            results.Add(new BulkOperationItemResultDto
+                            {
+                                UserId = userId,
+                                UserName = user.UserName,
+                                Success = false,
+                                ErrorMessage = $"Failed to enable lockout: {errors}",
+                                Status = "Failed"
+                            });
+                            failedCount++;
+                            continue;
+                        }
                     }
-                    else
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 2: SET LOCKOUT END DATE
+                    // ═══════════════════════════════════════════════════════════════
+                    var lockoutResult = await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
+                    if (!lockoutResult.Succeeded)
                     {
-                        var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+                        var errors = string.Join(", ", lockoutResult.Errors.Select(e => e.Description));
                         results.Add(new BulkOperationItemResultDto
                         {
                             UserId = userId,
                             UserName = user.UserName,
                             Success = false,
-                            ErrorMessage = errors,
+                            ErrorMessage = $"Failed to set lockout: {errors}",
                             Status = "Failed"
                         });
                         failedCount++;
+                        continue;
                     }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 3: UPDATE SECURITY STAMP
+                    // ═══════════════════════════════════════════════════════════════
+                    var stampResult = await _userManager.UpdateSecurityStampAsync(user);
+                    // Note: Log warning if stamp update fails, but proceed because DB lockout is active
+                    if (!stampResult.Succeeded)
+                    {
+                        _logger.LogWarning("Failed to update security stamp for user {UserId}", userId);
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 4: REAL-TIME CACHE BAN
+                    // ═══════════════════════════════════════════════════════════════
+                    var cacheSuccess = false;
+                    try
+                    {
+                        cacheSuccess = await _bannedUserCache.BanUserAsync(
+                            userId,
+                            $"Bulk deactivation by Admin {adminId}. Reason: {request.Reason ?? "No reason provided"}",
+                            ct);
+                    }
+                    catch (Exception cacheEx)
+                    {
+                        _logger.LogWarning(cacheEx, "Exception adding user {UserId} to ban cache.", userId);
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 5: SIGNALR NOTIFICATION
+                    // ═══════════════════════════════════════════════════════════════
+                    var signalRSuccess = false;
+                    try
+                    {
+                        await _hubContext.Clients.User(userId).SendAsync(
+                            AppHubEvents.ReceiveLogoutCommand,
+                            new
+                            {
+                                message = "Your account has been deactivated by an administrator.",
+                                reason = request.Reason ?? "Account deactivation",
+                                timestamp = DateTimeOffset.UtcNow,
+                                requireLogout = true
+                            },
+                            ct);
+                        signalRSuccess = true;
+                    }
+                    catch (Exception signalREx)
+                    {
+                        _logger.LogWarning(signalREx, "Failed to send SignalR logout command to user {UserId}.",
+                            userId);
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // SUCCESS
+                    // ═══════════════════════════════════════════════════════════════
+                    results.Add(new BulkOperationItemResultDto
+                    {
+                        UserId = userId,
+                        UserName = user.UserName,
+                        Success = true,
+                        Status = "Success"
+                    });
+                    successCount++;
+
+                    _logger.LogInformation(
+                        "User {UserId} ({UserName}) deactivated via bulk. Cache={CacheSuccess}, SignalR={SignalRSuccess}",
+                        userId, user.UserName, cacheSuccess, signalRSuccess);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error deactivating user {UserId}", userId);
+                    _logger.LogError(ex, "Error deactivating user {UserId} in bulk operation", userId);
                     results.Add(new BulkOperationItemResultDto
                     {
                         UserId = userId,
@@ -790,7 +1093,7 @@ public class AdminUserService : IAdminUserService
             return Response.Error("Error processing bulk deactivate operation");
         }
     }
-
+    
     public async Task<Response> BulkReactivateUsersAsync(BulkReactivateUsersDto request, CancellationToken ct)
     {
         try
@@ -804,6 +1107,9 @@ public class AdminUserService : IAdminUserService
             {
                 try
                 {
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 1: FIND USER
+                    // ═══════════════════════════════════════════════════════════════
                     var user = await _userManager.FindByIdAsync(userId);
                     if (user == null)
                     {
@@ -818,7 +1124,11 @@ public class AdminUserService : IAdminUserService
                         continue;
                     }
 
-                    if (!user.LockoutEnd.HasValue || user.LockoutEnd.Value <= DateTimeOffset.UtcNow)
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 2: CHECK IF ACTUALLY LOCKED OUT (Standard Identity API)
+                    // ═══════════════════════════════════════════════════════════════
+                    var isCurrentlyLockedOut = await _userManager.IsLockedOutAsync(user);
+                    if (!isCurrentlyLockedOut)
                     {
                         results.Add(new BulkOperationItemResultDto
                         {
@@ -832,37 +1142,104 @@ public class AdminUserService : IAdminUserService
                         continue;
                     }
 
-                    user.LockoutEnd = null;
-                    var result = await _userManager.UpdateSecurityStampAsync(user);
+                    // Save previous state for logging
+                    var previousLockoutEnd = user.LockoutEnd;
+                    var previousAccessFailedCount = user.AccessFailedCount;
 
-                    if (result.Succeeded)
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 3: UNLOCK USER (Standard Identity API)
+                    // ═══════════════════════════════════════════════════════════════
+                    var unlockResult = await _userManager.SetLockoutEndDateAsync(user, null);
+                    if (!unlockResult.Succeeded)
                     {
-                        results.Add(new BulkOperationItemResultDto
-                        {
-                            UserId = userId,
-                            UserName = user.UserName,
-                            Success = true,
-                            Status = "Success"
-                        });
-                        successCount++;
-
-                        _logger.LogInformation(
-                            "User {UserId} ({UserName}) reactivated via bulk operation. Reason: {Reason}",
-                            userId, user.UserName, request.Reason ?? "No reason provided");
-                    }
-                    else
-                    {
-                        var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+                        var errors = string.Join(", ", unlockResult.Errors.Select(e => e.Description));
                         results.Add(new BulkOperationItemResultDto
                         {
                             UserId = userId,
                             UserName = user.UserName,
                             Success = false,
-                            ErrorMessage = errors,
+                            ErrorMessage = $"Failed to unlock: {errors}",
                             Status = "Failed"
                         });
                         failedCount++;
+                        continue;
                     }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 4: RESET ACCESS FAILED COUNT (Clean Slate)
+                    // 
+                    // ⚠️ CRUCIAL: Without this, user with previous failed attempts
+                    // could be immediately re-locked on first failed login
+                    // ═══════════════════════════════════════════════════════════════
+                    var resetResult = await _userManager.ResetAccessFailedCountAsync(user);
+                    if (!resetResult.Succeeded)
+                    {
+                        _logger.LogWarning(
+                            "Failed to reset access failed count for user {UserId} in bulk operation. " +
+                            "User may be at risk of immediate re-lockout.",
+                            userId);
+                        // Note: Don't fail - lockout is already removed
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 5: UPDATE SECURITY STAMP (Invalidate tokens)
+                    // ═══════════════════════════════════════════════════════════════
+                    var stampResult = await _userManager.UpdateSecurityStampAsync(user);
+                    if (!stampResult.Succeeded)
+                    {
+                        _logger.LogWarning(
+                            "Failed to update security stamp for user {UserId} in bulk operation. " +
+                            "Old tokens may remain valid.",
+                            userId);
+                        // Note: Don't fail - lockout is already removed
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // STEP 6: REMOVE FROM BANNED CACHE (Best Effort)
+                    // 
+                    // Wrapped in try-catch: Cache failure should NOT fail reactivation
+                    // DB is already updated, user can login after cache TTL expires
+                    // ═══════════════════════════════════════════════════════════════
+                    var cacheCleared = false;
+                    try
+                    {
+                        cacheCleared = await _bannedUserCache.UnbanUserAsync(userId, ct);
+                        if (!cacheCleared)
+                        {
+                            _logger.LogWarning(
+                                "Failed to remove user {UserId} from banned cache in bulk operation. " +
+                                "User may need to wait for cache TTL to expire.",
+                                userId);
+                        }
+                    }
+                    catch (Exception cacheEx)
+                    {
+                        _logger.LogWarning(cacheEx,
+                            "Exception removing user {UserId} from banned cache. " +
+                            "DB reactivation succeeded, cache will expire naturally.",
+                            userId);
+                        // Don't fail - DB update is successful
+                    }
+
+                    // ═══════════════════════════════════════════════════════════════
+                    // SUCCESS
+                    // ═══════════════════════════════════════════════════════════════
+                    results.Add(new BulkOperationItemResultDto
+                    {
+                        UserId = userId,
+                        UserName = user.UserName,
+                        Success = true,
+                        Status = "Success"
+                    });
+                    successCount++;
+
+                    _logger.LogInformation(
+                        "User {UserId} ({UserName}) reactivated via bulk operation. " +
+                        "Previous: LockoutEnd={PrevLockout}, FailedCount={PrevFailed}. " +
+                        "Current: Unlocked, FailedCount=0, CacheCleared={CacheCleared}. Reason: {Reason}",
+                        userId, user.UserName,
+                        previousLockoutEnd, previousAccessFailedCount,
+                        cacheCleared, request.Reason ?? "No reason provided");
                 }
                 catch (Exception ex)
                 {
@@ -871,7 +1248,7 @@ public class AdminUserService : IAdminUserService
                     {
                         UserId = userId,
                         Success = false,
-                        ErrorMessage = ex.Message,
+                        ErrorMessage = "Internal error during reactivation",
                         Status = "Failed"
                     });
                     failedCount++;
@@ -888,6 +1265,10 @@ public class AdminUserService : IAdminUserService
                 Results = results,
                 ProcessedAt = DateTime.UtcNow
             };
+
+            _logger.LogInformation(
+                "Bulk reactivate completed. Total={Total}, Success={Success}, Failed={Failed}, Skipped={Skipped}",
+                request.UserIds.Count, successCount, failedCount, skippedCount);
 
             return Response.Ok(bulkResult);
         }
@@ -946,7 +1327,7 @@ public class AdminUserService : IAdminUserService
                     $"{EscapeCsv(user.Nickname)}," +
                     $"{EscapeCsv(user.Country)}," +
                     $"{EscapeCsv(user.City)}," +
-                    $"{EscapeCsv(roles)}," + 
+                    $"{EscapeCsv(roles)}," +
                     $"{user.CreatedAt:yyyy-MM-dd HH:mm:ss}," +
                     $"{isLockedOut}," +
                     $"{EscapeCsv(user.LockoutEnd?.ToString("yyyy-MM-dd HH:mm:ss"))}"
