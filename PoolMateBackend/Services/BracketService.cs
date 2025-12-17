@@ -1001,7 +1001,6 @@ namespace PoolMate.Api.Services
 
             _ = ApplyPlacements(placementMatches, stats);
 
-            // Xác định IsEliminated
             foreach (var stat in stats.Values)
             {
                 if (!tournamentState.IsStarted || stat.MatchesPlayed == 0)
@@ -1013,20 +1012,16 @@ namespace PoolMate.Api.Services
                 var isActive = activePlayers.Contains(stat.TournamentPlayerId);
                 var isChampion = championIds.Contains(stat.TournamentPlayerId);
                 
-                // Với multi-stage: Player phải ở highest stage để được coi là còn sống
                 if (tournamentState.IsMultiStage && maxStageNo > 1)
                 {
-                    var playerMaxStage = stat.LastStageNo ?? 0;
-                    var isInCurrentStage = playerMaxStage == maxStageNo;
+                    var hasMatchInHighestStage = matches.Any(m => 
+                        m.StageNo == maxStageNo && 
+                        (m.Player1TpId == stat.TournamentPlayerId || m.Player2TpId == stat.TournamentPlayerId));
                     
-                    // Eliminated nếu:
-                    // - Không ở stage cao nhất HOẶC
-                    // - Ở stage cao nhất nhưng không active và không phải champion
-                    stat.IsEliminated = !isInCurrentStage || (!isActive && !isChampion);
+                    stat.IsEliminated = !hasMatchInHighestStage || (!isActive && !isChampion);
                 }
                 else
                 {
-                    // Single stage: Logic cũ
                     stat.IsEliminated = !(isActive || isChampion);
                 }
             }
