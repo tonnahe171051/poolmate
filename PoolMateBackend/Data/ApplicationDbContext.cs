@@ -11,6 +11,7 @@ namespace PoolMate.Api.Data
 
         // DbSets
         public DbSet<Post> Posts { get; set; }
+        public DbSet<Organizer> Organizers { get; set; }
 
         public DbSet<Venue> Venues => Set<Venue>();
         public DbSet<Tournament> Tournaments => Set<Tournament>();
@@ -63,6 +64,24 @@ namespace PoolMate.Api.Data
                       .HasForeignKey(e => e.UserId)
                       .OnDelete(DeleteBehavior.Cascade);
             });
+
+            // ===== Organizer =====
+            var org = builder.Entity<Organizer>();
+            org.Property(x => x.OrganizationName).HasMaxLength(200).IsRequired();
+            org.Property(x => x.Email).HasMaxLength(200).IsRequired();
+            org.Property(x => x.FacebookPageUrl).HasMaxLength(300);
+            
+            // One-to-One relationship with ApplicationUser
+            org.HasOne(x => x.User)
+               .WithMany()
+               .HasForeignKey(x => x.UserId)
+               .OnDelete(DeleteBehavior.Cascade);
+            
+            // Unique constraint: One user can only have one organizer profile
+            org.HasIndex(x => x.UserId).IsUnique();
+            
+            // Index for email search
+            org.HasIndex(x => x.Email);
 
             // ===== Venue =====
             var v = builder.Entity<Venue>();

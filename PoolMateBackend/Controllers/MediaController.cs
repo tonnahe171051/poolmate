@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using PoolMate.Api.Integrations.Cloudinary36;
 using System.Security.Claims;
@@ -7,6 +8,7 @@ namespace PoolMate.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class MediaController : ControllerBase
     {
         private readonly ICloudinaryService _cloud;

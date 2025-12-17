@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Dtos.Tournament;
 using PoolMate.Api.Services;
 
@@ -7,7 +8,7 @@ namespace PoolMate.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
+[Authorize(Roles = UserRoles.ORGANIZER)]
 public class MatchesController : ControllerBase
 {
     private readonly IMatchService _matchService;

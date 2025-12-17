@@ -59,4 +59,10 @@ public interface ITournamentPlayerService
         string ownerUserId,
         DeletePlayersModel model,
         CancellationToken ct);
+
+    Task<TournamentPlayer> RegisterForTournamentAsync(
+        int tournamentId,
+        string userId,
+        RegisterForTournamentRequest request,
+        CancellationToken ct);
 }

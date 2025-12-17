@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PoolMate.Api.Common;
+using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Dtos.Tournament;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
@@ -32,6 +33,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> Create([FromBody] CreateTournamentModel m, CancellationToken ct)
     {
         try
@@ -48,6 +50,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("my-tournaments")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<ActionResult<PagingList<UserTournamentListDto>>> GetTournamentsByUser(
         [FromQuery] string? searchName = null,
         [FromQuery] TournamentStatus? status = null,
@@ -72,6 +75,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPut("{id:int}")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> Update(int id, [FromBody] UpdateTournamentModel m, CancellationToken ct)
     {
         try
@@ -87,6 +91,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPatch("{id:int}/flyer")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> UpdateFlyer(int id, [FromBody] UpdateFlyerModel m, CancellationToken ct)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -95,6 +100,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{id:int}/start")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> Start(int id, CancellationToken ct)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -103,6 +109,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("payout-templates")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<ActionResult<List<PayoutTemplateDto>>> GetPayoutTemplates(CancellationToken ct)
     {
         try
@@ -139,7 +146,50 @@ public class TournamentsController : ControllerBase
         return Ok(result);
     }
 
+    [HttpPost("{id}/register")]
+    [Authorize] // Requires user to be logged in
+    public async Task<IActionResult> RegisterForTournament(
+        int id,
+        [FromBody] RegisterForTournamentRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Validate phone number if provided
+            if (!string.IsNullOrWhiteSpace(request.Phone))
+            {
+                var phone = request.Phone.Trim();
+                if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
+                    return BadRequest(new
+                        { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+                request.Phone = phone;
+            }
+
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var tournamentPlayer = await _playerSvc.RegisterForTournamentAsync(id, userId, request, ct);
+
+            return Ok(new
+            {
+                message = "Registration successful! Your registration is pending approval from the organizer.",
+                tournamentPlayerId = tournamentPlayer.Id,
+                status = tournamentPlayer.Status
+            });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("{id}/players")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> AddPlayer(
         int id,
         [FromBody] AddTournamentPlayerModel model,
@@ -177,6 +227,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{id}/players/bulk-lines")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> BulkAddPlayersPerLine(
         int id,
         [FromBody] AddTournamentPlayersPerLineModel model,
@@ -199,6 +250,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("players/search")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> SearchPlayers([FromQuery] string q, [FromQuery] int limit = 10,
         CancellationToken ct = default)
     {
@@ -207,6 +259,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{tournamentId}/players/{tpId}/link")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> LinkPlayer(int tournamentId, int tpId, [FromBody] LinkPlayerRequest m,
         CancellationToken ct)
     {
@@ -217,6 +270,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{tournamentId}/players/{tpId}/unlink")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> UnlinkPlayer(int tournamentId, int tpId, CancellationToken ct)
     {
         var uid = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -226,6 +280,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{tournamentId}/players/{tpId}/create-profile")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> CreateProfileFromSnapshot(int tournamentId, int tpId,
         [FromBody] CreateProfileFromSnapshotRequest m, CancellationToken ct)
     {
@@ -247,6 +302,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPut("{tournamentId}/players/{tpId}")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> UpdateTournamentPlayer(
         int tournamentId,
         int tpId,
@@ -286,6 +342,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{id}/tables")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> AddTable(
         int id,
         [FromBody] AddTournamentTableModel model,
@@ -309,6 +366,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{id}/tables/bulk")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> AddMultipleTables(
         int id,
         [FromBody] AddMultipleTournamentTablesModel model,
@@ -339,6 +397,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPut("{tournamentId}/tables/{tableId}")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> UpdateTable(
         int tournamentId,
         int tableId,
@@ -362,6 +421,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpDelete("{tournamentId}/tables")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> DeleteTables(
         int tournamentId,
         [FromBody] DeleteTablesModel model,
@@ -403,6 +463,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpDelete("{tournamentId}/players")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> DeletePlayers(
         int tournamentId,
         [FromBody] DeletePlayersModel model,
@@ -434,6 +495,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> DeleteTournament(int id, CancellationToken ct)
     {
         try
@@ -452,8 +514,8 @@ public class TournamentsController : ControllerBase
         }
     }
 
-    // Controllers/TournamentsController.cs
     [HttpGet("{id}/bracket/preview")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<ActionResult<BracketPreviewDto>> PreviewBracket(int id, CancellationToken ct)
     {
         var dto = await _bracket.PreviewAsync(id, ct);
@@ -461,6 +523,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("{id}/stages/{stageNo}/preview")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<ActionResult<StageDto>> PreviewStage(int id, int stageNo, CancellationToken ct)
     {
         try
@@ -480,6 +543,7 @@ public class TournamentsController : ControllerBase
 
 
     [HttpPost("{id}/bracket/create")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> CreateBracket(
         int id,
         [FromBody] CreateBracketRequest? request,
@@ -497,6 +561,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{id}/bracket/reset")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> ResetBracket(int id, CancellationToken ct)
     {
         try
@@ -538,6 +603,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("{id}/bracket/winners")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<ActionResult<BracketDto>> GetBracketWinners(int id, CancellationToken ct)
     {
         try
@@ -556,6 +622,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("{id}/bracket/losers")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<ActionResult<BracketDto>> GetBracketLosers(int id, CancellationToken ct)
     {
         try
@@ -574,6 +641,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("{id}/status-summary")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<ActionResult<TournamentStatusSummaryDto>> GetTournamentStatusSummary(int id, CancellationToken ct)
     {
         try
@@ -588,6 +656,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpPost("{tournamentId}/stages/{stageNo}/complete")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> CompleteStage(
         int tournamentId,
         int stageNo,
@@ -611,6 +680,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("{id}/bracket/debug")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<ActionResult<IReadOnlyList<string>>> GetBracketDebug(int id, CancellationToken ct = default)
     {
         var lines = await _bracket.GetBracketDebugViewAsync(id, ct);
