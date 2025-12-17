@@ -865,6 +865,20 @@ namespace PoolMate.Api.Services
             await _db.SaveChangesAsync(ct);
         }
 
+        private sealed record MatchStatsData(
+            int Id,
+            int RoundNo,
+            int StageNo,
+            BracketSide Bracket,
+            int? Player1TpId,
+            int? Player2TpId,
+            int? WinnerTpId,
+            int? ScoreP1,
+            int? ScoreP2,
+            MatchStatus Status,
+            int? NextWinnerMatchId,
+            int? NextLoserMatchId);
+
         public async Task<IReadOnlyList<TournamentPlayerStatsDto>> GetPlayerStatsAsync(int tournamentId, CancellationToken ct)
         {
             var tournament = await _db.Tournaments
@@ -882,12 +896,7 @@ namespace PoolMate.Api.Services
 
             var players = await _db.TournamentPlayers
                 .Where(tp => tp.TournamentId == tournamentId)
-                .Select(tp => new
-                {
-                    tp.Id,
-                    tp.DisplayName,
-                    tp.Seed
-                })
+                .Select(tp => new { tp.Id, tp.DisplayName, tp.Seed })
                 .ToListAsync(ct);
 
             if (players.Count == 0)
@@ -911,11 +920,10 @@ namespace PoolMate.Api.Services
 
             var matches = await _db.Matches
                 .Where(m => m.TournamentId == tournamentId)
-                .Select(m => new
-                {
+                .Select(m => new MatchStatsData(
                     m.Id,
                     m.RoundNo,
-                    StageNo = m.Stage.StageNo,
+                    m.Stage.StageNo,
                     m.Bracket,
                     m.Player1TpId,
                     m.Player2TpId,
@@ -925,12 +933,46 @@ namespace PoolMate.Api.Services
                     m.Status,
                     m.NextWinnerMatchId,
                     m.NextLoserMatchId
-                })
+                ))
                 .ToListAsync(ct);
 
             var activePlayers = new HashSet<int>();
             var maxStageNo = matches.Any() ? matches.Max(m => m.StageNo) : 0;
 
+            // Populate stats from matches
+            PopulatePlayerStats(matches, stats, activePlayers);
+
+            // Determine champions
+            var championIds = DetermineChampions(matches, maxStageNo);
+
+            // Apply placements if appropriate
+            if (ShouldApplyPlacements(tournamentState, matches, maxStageNo))
+            {
+                var placementMatches = matches
+                    .Select(m => new PlacementMatch(m.Id, m.StageNo, m.Bracket, m.RoundNo, 
+                        m.Player1TpId, m.Player2TpId, m.WinnerTpId, m.Status, 
+                        m.NextWinnerMatchId, m.NextLoserMatchId))
+                    .ToList();
+                    
+                _ = ApplyPlacements(placementMatches, stats);
+            }
+
+            // Calculate elimination status
+            var survivorTpIds = CalculateSurvivors(tournament, tournamentState, matches, maxStageNo);
+            UpdateEliminationStatus(stats, tournamentState, matches, activePlayers, championIds, survivorTpIds, maxStageNo);
+
+            return stats.Values
+                .OrderBy(s => s.PlacementRank ?? int.MaxValue)
+                .ThenBy(s => s.Seed ?? int.MaxValue)
+                .ThenBy(s => s.DisplayName)
+                .ToList();
+        }
+
+        private void PopulatePlayerStats(
+            List<MatchStatsData> matches,
+            Dictionary<int, TournamentPlayerStatsDto> stats,
+            HashSet<int> activePlayers)
+        {
             foreach (var match in matches)
             {
                 var isCompleted = match.Status == MatchStatus.Completed;
@@ -946,11 +988,8 @@ namespace PoolMate.Api.Services
                         p1.MatchesPlayed++;
                         if (match.ScoreP1.HasValue) p1.RacksWon += match.ScoreP1.Value;
                         if (match.ScoreP2.HasValue) p1.RacksLost += match.ScoreP2.Value;
-
-                        if (match.WinnerTpId == match.Player1TpId)
-                            p1.Wins++;
-                        else if (match.WinnerTpId == match.Player2TpId)
-                            p1.Losses++;
+                        if (match.WinnerTpId == match.Player1TpId) p1.Wins++;
+                        else if (match.WinnerTpId == match.Player2TpId) p1.Losses++;
                     }
 
                     if (!isCompleted)
@@ -967,61 +1006,85 @@ namespace PoolMate.Api.Services
                         p2.MatchesPlayed++;
                         if (match.ScoreP2.HasValue) p2.RacksWon += match.ScoreP2.Value;
                         if (match.ScoreP1.HasValue) p2.RacksLost += match.ScoreP1.Value;
-
-                        if (match.WinnerTpId == match.Player2TpId)
-                            p2.Wins++;
-                        else if (match.WinnerTpId == match.Player1TpId)
-                            p2.Losses++;
+                        if (match.WinnerTpId == match.Player2TpId) p2.Wins++;
+                        else if (match.WinnerTpId == match.Player1TpId) p2.Losses++;
                     }
 
                     if (!isCompleted)
                         activePlayers.Add(match.Player2TpId.Value);
                 }
             }
+        }
 
-            // Xác định final match của giải (highest stage)
+        private HashSet<int> DetermineChampions(List<MatchStatsData> matches, int maxStageNo)
+        {
             var finalMatchIds = matches
-                .Where(m => m.StageNo == maxStageNo)
-                .Where(m => m.Status == MatchStatus.Completed && m.WinnerTpId.HasValue)
-                .Where(m => m.NextWinnerMatchId == null && m.NextLoserMatchId == null)
+                .Where(m => m.StageNo == maxStageNo && m.Status == MatchStatus.Completed && 
+                           m.WinnerTpId.HasValue && m.NextWinnerMatchId == null && m.NextLoserMatchId == null)
                 .Select(m => m.Id)
                 .ToHashSet();
 
-            var championIds = matches
+            return matches
                 .Where(m => finalMatchIds.Contains(m.Id))
                 .Select(m => m.WinnerTpId!.Value)
                 .ToHashSet();
+        }
 
-            var placementMatches = matches
-                .Select(m => new PlacementMatch(
-                    m.Id,
-                    m.StageNo,
-                    m.Bracket,
-                    m.RoundNo,
-                    m.Player1TpId,
-                    m.Player2TpId,
-                    m.WinnerTpId,
-                    m.Status,
-                    m.NextWinnerMatchId,
-                    m.NextLoserMatchId))
-                .ToList();
-
-            // Check if we should apply placements
-            // Only apply when tournament is completed OR (multi-stage with stage 2 has activity)
-            bool shouldApplyPlacements = tournamentState.IsCompleted;
+        private bool ShouldApplyPlacements(dynamic tournamentState, List<MatchStatsData> matches, int maxStageNo)
+        {
+            if (tournamentState.IsCompleted) return true;
             
-            if (!shouldApplyPlacements && tournamentState.IsMultiStage && maxStageNo > 1)
+            if (tournamentState.IsMultiStage && maxStageNo > 1)
             {
-                // Multi-stage with stage 2 created - apply placements if stage 2 has completed matches
-                var stage2HasCompletedMatches = matches.Any(m => m.StageNo == 2 && m.Status == MatchStatus.Completed);
-                shouldApplyPlacements = stage2HasCompletedMatches;
+                return matches.Any(m => m.StageNo == 2 && m.Status == MatchStatus.Completed);
             }
+            
+            return false;
+        }
 
-            if (shouldApplyPlacements)
+        private HashSet<int>? CalculateSurvivors(
+            Tournament tournament, 
+            dynamic tournamentState, 
+            List<MatchStatsData> matches, 
+            int maxStageNo)
+        {
+            if (!tournamentState.IsMultiStage || maxStageNo != 1) return null;
+
+            var stage1 = tournament.Stages.FirstOrDefault(s => s.StageNo == 1);
+            if (stage1 == null || !stage1.AdvanceCount.HasValue) return null;
+
+            var stage1Matches = matches.Where(m => m.StageNo == 1).ToList();
+            var survivors = new HashSet<int>();
+            var matchLookup = stage1Matches.ToDictionary(m => m.Id);
+            
+            foreach (var match in stage1Matches)
             {
-                _ = ApplyPlacements(placementMatches, stats);
-            }
+                if (match.Status != MatchStatus.Completed)
+                {
+                    if (match.Player1TpId.HasValue) survivors.Add(match.Player1TpId.Value);
+                    if (match.Player2TpId.HasValue) survivors.Add(match.Player2TpId.Value);
+                    continue;
+                }
 
+                if (match.WinnerTpId.HasValue)
+                {
+                    var hasNext = match.NextWinnerMatchId.HasValue && matchLookup.ContainsKey(match.NextWinnerMatchId.Value);
+                    if (!hasNext) survivors.Add(match.WinnerTpId.Value);
+                }
+            }
+            
+            return survivors;
+        }
+
+        private void UpdateEliminationStatus(
+            Dictionary<int, TournamentPlayerStatsDto> stats,
+            dynamic tournamentState,
+            List<MatchStatsData> matches,
+            HashSet<int> activePlayers,
+            HashSet<int> championIds,
+            HashSet<int>? survivorTpIds,
+            int maxStageNo)
+        {
             foreach (var stat in stats.Values)
             {
                 if (!tournamentState.IsStarted || stat.MatchesPlayed == 0)
@@ -1041,17 +1104,15 @@ namespace PoolMate.Api.Services
                     
                     stat.IsEliminated = !hasMatchInHighestStage || (!isActive && !isChampion);
                 }
+                else if (survivorTpIds != null)
+                {
+                    stat.IsEliminated = !survivorTpIds.Contains(stat.TournamentPlayerId);
+                }
                 else
                 {
                     stat.IsEliminated = !(isActive || isChampion);
                 }
             }
-
-            return stats.Values
-                .OrderBy(s => s.PlacementRank ?? int.MaxValue)
-                .ThenBy(s => s.Seed ?? int.MaxValue)
-                .ThenBy(s => s.DisplayName)
-                .ToList();
         }
 
         public async Task<IReadOnlyList<string>> GetBracketDebugViewAsync(int tournamentId, CancellationToken ct)
