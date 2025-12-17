@@ -31,14 +31,6 @@ public class AuthController(IAuthService auth, IConfiguration config) : Controll
         }
     }
 
-    [HttpPost("register-admin")]
-    [AllowAnonymous]
-    public async Task<IActionResult> RegisterAdmin([FromBody] RegisterModel model, CancellationToken ct)
-    {
-        var res = await auth.RegisterAdminAsync(model, ct); 
-        return res.Status == "Success" ? Ok(res) : BadRequest(res);
-    }
-
     [HttpGet("confirm-email")]
     [AllowAnonymous]
     public async Task<IActionResult> ConfirmEmail([FromQuery] string userId, [FromQuery] string token, CancellationToken ct)
