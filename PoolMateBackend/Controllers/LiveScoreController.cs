@@ -34,7 +34,7 @@ namespace PoolMate.Api.Controllers
         }
 
         [HttpPost("tournaments/{tournamentId:int}/tables/{tableId:int}/token")]
-        [Authorize]
+        [AllowAnonymous]
         public async Task<ActionResult<TableTokenResponse>> GenerateTableToken(
             int tournamentId,
             int tableId,
