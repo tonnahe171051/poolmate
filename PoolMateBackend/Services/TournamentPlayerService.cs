@@ -9,6 +9,9 @@ using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Tournament;
 using PoolMate.Api.Models;
 using PoolMate.Api.Integrations.Email;
+using OfficeOpenXml;
+using System.IO;
+using System.ComponentModel.DataAnnotations;
 
 namespace PoolMate.Api.Services;
 
@@ -199,6 +202,233 @@ public class TournamentPlayerService : ITournamentPlayerService
             .ToList();
 
         return result;
+    }
+
+    public async Task<BulkAddPlayersResult> BulkAddPlayersFromExcelAsync(
+        int tournamentId,
+        string ownerUserId,
+        Stream fileStream,
+        CancellationToken ct)
+    {
+        var tournament = await _db.Tournaments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+
+        if (tournament is null) throw new InvalidOperationException("Tournament not found.");
+        if (tournament.OwnerUserId != ownerUserId) throw new UnauthorizedAccessException();
+
+        if (!CanEditBracket(tournament))
+        {
+            throw new InvalidOperationException("Cannot add players after tournament has started or completed.");
+        }
+
+        var result = new BulkAddPlayersResult();
+        List<TournamentPlayer> toAdd;
+
+        try
+        {
+            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+            using var package = new ExcelPackage(fileStream);
+            var worksheet = package.Workbook.Worksheets.FirstOrDefault();
+
+            if (worksheet == null || worksheet.Dimension == null)
+                throw new InvalidOperationException("Invalid file: Excel file is empty or has no data.");
+
+            // Validate structure - check headers
+            var headers = new[]
+            {
+                "DisplayName", "Nickname", "Email", "Phone", 
+                "Country", "City", "SkillLevel", "Seed"
+            };
+
+            for (int col = 1; col <= headers.Length; col++)
+            {
+                var cellValue = worksheet.Cells[1, col].Text?.Trim();
+                if (!string.Equals(cellValue, headers[col - 1], StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid structure: Column {col} header must be '{headers[col - 1]}' but found '{cellValue}'.");
+                }
+            }
+
+            // Parse rows
+            var players = new List<TournamentPlayer>();
+            var rowCount = worksheet.Dimension.End.Row;
+
+            if (rowCount < 2)
+                throw new InvalidOperationException("Invalid file: No player data (only headers).");
+
+            for (int row = 2; row <= rowCount; row++)
+            {
+                var displayName = worksheet.Cells[row, 1].Text?.Trim();
+                if (string.IsNullOrWhiteSpace(displayName)) continue; // Skip empty rows
+
+                var nickname = worksheet.Cells[row, 2].Text?.Trim();
+                var email = worksheet.Cells[row, 3].Text?.Trim();
+                var phone = worksheet.Cells[row, 4].Text?.Trim();
+                var country = worksheet.Cells[row, 5].Text?.Trim();
+                var city = worksheet.Cells[row, 6].Text?.Trim();
+                var skillLevelText = worksheet.Cells[row, 7].Text?.Trim();
+                var seedText = worksheet.Cells[row, 8].Text?.Trim();
+
+                // Validate email format
+                if (!string.IsNullOrWhiteSpace(email))
+                {
+                    var emailAttr = new EmailAddressAttribute();
+                    if (!emailAttr.IsValid(email))
+                        throw new InvalidOperationException("Invalid data: Invalid email format.");
+                }
+
+                // Validate country code
+                if (!string.IsNullOrWhiteSpace(country) && country.Length != 2)
+                    throw new InvalidOperationException("Invalid data: Country code must be 2 characters.");
+
+                // Parse skill level
+                int? skillLevel = null;
+                if (!string.IsNullOrWhiteSpace(skillLevelText))
+                {
+                    if (!int.TryParse(skillLevelText, out var sl) || sl < 0)
+                        throw new InvalidOperationException("Invalid data: SkillLevel must be a non-negative number.");
+                    skillLevel = sl;
+                }
+
+                // Parse seed
+                int? seed = null;
+                if (!string.IsNullOrWhiteSpace(seedText))
+                {
+                    if (!int.TryParse(seedText, out var s) || s <= 0)
+                        throw new InvalidOperationException("Invalid data: Seed must be a positive number.");
+                    seed = s;
+                }
+
+                var player = new TournamentPlayer
+                {
+                    TournamentId = tournamentId,
+                    DisplayName = displayName,
+                    Nickname = string.IsNullOrWhiteSpace(nickname) ? null : nickname,
+                    Email = string.IsNullOrWhiteSpace(email) ? null : email,
+                    Phone = string.IsNullOrWhiteSpace(phone) ? null : phone,
+                    Country = string.IsNullOrWhiteSpace(country) ? null : country,
+                    City = string.IsNullOrWhiteSpace(city) ? null : city,
+                    SkillLevel = skillLevel,
+                    Seed = seed,
+                    Status = TournamentPlayerStatus.Confirmed
+                };
+
+                players.Add(player);
+            }
+
+            if (players.Count == 0)
+                throw new InvalidOperationException("Invalid file: No valid players in file.");
+
+            toAdd = players;
+        }
+        catch (InvalidOperationException)
+        {
+            throw; // Re-throw validation errors
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Invalid file: Cannot read Excel file. {ex.Message}");
+        }
+
+        // Check capacity
+        var (canAdd, currentCount, maxLimit) = await CanAddPlayersAsync(tournamentId, toAdd.Count, ct);
+        if (!canAdd)
+        {
+            var availableSlots = maxLimit.HasValue ? Math.Max(0, maxLimit.Value - currentCount) : toAdd.Count;
+            throw new InvalidOperationException(
+                $"Invalid data: Cannot add {toAdd.Count} players. Tournament has only {availableSlots} slots remaining ({currentCount}/{maxLimit}).");
+        }
+
+        // Check duplicate seeds
+        var seedsInFile = toAdd.Where(p => p.Seed.HasValue).Select(p => p.Seed!.Value).ToList();
+        if (seedsInFile.Count != seedsInFile.Distinct().Count())
+            throw new InvalidOperationException("Invalid data: Duplicate seeds in file.");
+
+        // Check seeds against existing players
+        if (seedsInFile.Any())
+        {
+            var existingSeeds = await _db.TournamentPlayers
+                .Where(x => x.TournamentId == tournamentId && x.Seed.HasValue && seedsInFile.Contains(x.Seed.Value))
+                .Select(x => x.Seed!.Value)
+                .ToListAsync(ct);
+
+            if (existingSeeds.Any())
+                throw new InvalidOperationException("Invalid data: Seed already exists in tournament.");
+        }
+
+        // Add players
+        _db.TournamentPlayers.AddRange(toAdd);
+        await _db.SaveChangesAsync(ct);
+
+        result.AddedCount = toAdd.Count;
+        result.Added = toAdd
+            .Select(x => new BulkAddPlayersResult.Item
+            {
+                Id = x.Id,
+                DisplayName = x.DisplayName
+            })
+            .ToList();
+
+        return result;
+    }
+
+    public byte[] GeneratePlayersTemplate()
+    {
+        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+        using var package = new ExcelPackage();
+        var worksheet = package.Workbook.Worksheets.Add("Players");
+
+        // Headers
+        worksheet.Cells[1, 1].Value = "DisplayName";
+        worksheet.Cells[1, 2].Value = "Nickname";
+        worksheet.Cells[1, 3].Value = "Email";
+        worksheet.Cells[1, 4].Value = "Phone";
+        worksheet.Cells[1, 5].Value = "Country";
+        worksheet.Cells[1, 6].Value = "City";
+        worksheet.Cells[1, 7].Value = "SkillLevel";
+        worksheet.Cells[1, 8].Value = "Seed";
+
+        // Style headers
+        using (var range = worksheet.Cells[1, 1, 1, 8])
+        {
+            range.Style.Font.Bold = true;
+            range.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+            range.Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.LightGray);
+        }
+
+        // Sample data (8 rows)
+        var samples = new[]
+        {
+            new { Name = "Nguyễn Văn A", Nick = "Ace", Email = "nguyenvana@example.com", Phone = "0901234567", Country = "VN", City = "Hà Nội", Skill = "2800", Seed = "1" },
+            new { Name = "Trần Thị B", Nick = "Queen", Email = "tranthib@example.com", Phone = "0912345678", Country = "VN", City = "TP.HCM", Skill = "2650", Seed = "2" },
+            new { Name = "Lê Văn C", Nick = "King", Email = "levanc@example.com", Phone = "0923456789", Country = "VN", City = "Đà Nẵng", Skill = "2500", Seed = "3" },
+            new { Name = "Phạm Thị D", Nick = "", Email = "phamthid@example.com", Phone = "", Country = "VN", City = "Cần Thơ", Skill = "2400", Seed = "" },
+            new { Name = "Hoàng Văn E", Nick = "Shark", Email = "", Phone = "0945678901", Country = "VN", City = "Hải Phòng", Skill = "", Seed = "5" },
+            new { Name = "Võ Thị F", Nick = "", Email = "vothif@example.com", Phone = "", Country = "VN", City = "Huế", Skill = "2200", Seed = "" },
+            new { Name = "Đỗ Văn G", Nick = "Tiger", Email = "", Phone = "0967890123", Country = "VN", City = "Nha Trang", Skill = "", Seed = "" },
+            new { Name = "Bùi Thị H", Nick = "", Email = "buithih@example.com", Phone = "", Country = "VN", City = "Vũng Tàu", Skill = "2000", Seed = "8" }
+        };
+
+        for (int i = 0; i < samples.Length; i++)
+        {
+            var row = i + 2;
+            var sample = samples[i];
+            worksheet.Cells[row, 1].Value = sample.Name;
+            worksheet.Cells[row, 2].Value = sample.Nick;
+            worksheet.Cells[row, 3].Value = sample.Email;
+            worksheet.Cells[row, 4].Value = sample.Phone;
+            worksheet.Cells[row, 5].Value = sample.Country;
+            worksheet.Cells[row, 6].Value = sample.City;
+            worksheet.Cells[row, 7].Value = sample.Skill;
+            worksheet.Cells[row, 8].Value = sample.Seed;
+        }
+
+        // Auto-fit columns
+        worksheet.Cells.AutoFitColumns();
+
+        return package.GetAsByteArray();
     }
 
     public async Task<List<PlayerSearchItemDto>> SearchPlayersAsync(string q, int limit, CancellationToken ct)

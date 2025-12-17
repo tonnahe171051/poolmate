@@ -20,6 +20,14 @@ public interface ITournamentPlayerService
         AddTournamentPlayersPerLineModel model,
         CancellationToken ct);
 
+    Task<BulkAddPlayersResult> BulkAddPlayersFromExcelAsync(
+        int tournamentId,
+        string ownerUserId,
+        Stream fileStream,
+        CancellationToken ct);
+
+    byte[] GeneratePlayersTemplate();
+
     Task<List<PlayerSearchItemDto>> SearchPlayersAsync(string q, int limit, CancellationToken ct);
 
     Task<bool> LinkTournamentPlayerAsync(
