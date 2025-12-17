@@ -287,7 +287,7 @@ public class TournamentsController : ControllerBase
         }
     }
 
-    [HttpGet("players/template")]
+    [HttpGet("template/players")]
     [Authorize(Roles = UserRoles.ORGANIZER)]
     public IActionResult DownloadPlayersTemplate()
     {
@@ -297,7 +297,7 @@ public class TournamentsController : ControllerBase
             "Players_Template.xlsx");
     }
 
-    [HttpGet("players/search")]
+    [HttpGet("search/players")]
     [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> SearchPlayers([FromQuery] string q, [FromQuery] int limit = 10,
         CancellationToken ct = default)
