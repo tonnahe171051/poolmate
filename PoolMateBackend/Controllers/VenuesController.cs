@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Dtos.Venue;
 using PoolMate.Api.Services;
 using System.Security.Claims;
@@ -19,8 +20,8 @@ public class VenuesController : ControllerBase
                                             CancellationToken ct = default)
         => Ok(await _svc.SearchAsync(query, city, country, take, ct));
 
-    [Authorize]
     [HttpPost]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> Create([FromBody] CreateVenueRequest m, CancellationToken ct)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
