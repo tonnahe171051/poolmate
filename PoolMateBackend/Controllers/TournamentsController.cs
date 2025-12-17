@@ -5,6 +5,7 @@ using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Dtos.Tournament;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
+using System.IO;
 using System.Security.Claims;
 using System.Text.RegularExpressions;
 
