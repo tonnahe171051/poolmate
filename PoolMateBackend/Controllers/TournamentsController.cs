@@ -583,12 +583,10 @@ public class TournamentsController : ControllerBase
     [HttpGet("{id}/bracket")]
     public async Task<ActionResult<BracketDto>> GetBracket(
         int id,
-        [FromQuery] BracketFilterType? filterType = null,
         CancellationToken ct = default)
     {
         try
         {
-            // Remove filter-based path; always return full bracket here.
             var bracket = await _bracket.GetAsync(id, ct);
             return Ok(bracket);
         }

@@ -355,75 +355,19 @@ namespace PoolMate.Api.Services
 
         public async Task<BracketDto> GetFilteredAsync(int tournamentId, BracketFilterRequest filter, CancellationToken ct)
         {
-            // Get full bracket first
-            var fullBracket = await GetAsync(tournamentId, ct);
-
-            // Apply filter
-            return ApplyBracketFilter(fullBracket, filter);
+            return await GetAsync(tournamentId, ct);
         }
 
         // Return only the winners-side (or knockout) brackets for each stage
         public async Task<BracketDto> GetWinnersSideAsync(int tournamentId, CancellationToken ct)
         {
-            var full = await GetAsync(tournamentId, ct);
-            var res = new BracketDto
-            {
-                TournamentId = full.TournamentId,
-                IsMultiStage = full.IsMultiStage,
-                Stages = new List<StageDto>()
-            };
-
-            foreach (var s in full.Stages)
-            {
-                var stage = new StageDto
-                {
-                    StageNo = s.StageNo,
-                    Type = s.Type,
-                    Ordering = s.Ordering,
-                    BracketSize = s.BracketSize,
-                    Status = s.Status,
-                    CompletedAt = s.CompletedAt,
-                    AdvanceCount = s.AdvanceCount,
-                    CanComplete = s.CanComplete,
-                    Brackets = s.Brackets.Where(b => b.BracketSide == BracketSide.Winners || b.BracketSide == BracketSide.Knockout).ToList()
-                };
-
-                if (stage.Brackets.Any()) res.Stages.Add(stage);
-            }
-
-            return res;
+            return await GetAsync(tournamentId, ct);
         }
 
         // Return only the losers-side brackets for each stage
         public async Task<BracketDto> GetLosersSideAsync(int tournamentId, CancellationToken ct)
         {
-            var full = await GetAsync(tournamentId, ct);
-            var res = new BracketDto
-            {
-                TournamentId = full.TournamentId,
-                IsMultiStage = full.IsMultiStage,
-                Stages = new List<StageDto>()
-            };
-
-            foreach (var s in full.Stages)
-            {
-                var stage = new StageDto
-                {
-                    StageNo = s.StageNo,
-                    Type = s.Type,
-                    Ordering = s.Ordering,
-                    BracketSize = s.BracketSize,
-                    Status = s.Status,
-                    CompletedAt = s.CompletedAt,
-                    AdvanceCount = s.AdvanceCount,
-                    CanComplete = s.CanComplete,
-                    Brackets = s.Brackets.Where(b => b.BracketSide == BracketSide.Losers).ToList()
-                };
-
-                if (stage.Brackets.Any()) res.Stages.Add(stage);
-            }
-
-            return res;
+            return await GetAsync(tournamentId, ct);
         }
 
         private BracketDto ApplyBracketFilter(BracketDto bracket, BracketFilterRequest filter)
@@ -999,7 +943,21 @@ namespace PoolMate.Api.Services
                     m.NextLoserMatchId))
                 .ToList();
 
-            _ = ApplyPlacements(placementMatches, stats);
+            // Check if we should apply placements
+            // For multi-stage: only apply if stage 2 exists AND has completed matches
+            // For single-stage: always apply
+            bool shouldApplyPlacements = true;
+            if (tournamentState.IsMultiStage && maxStageNo > 1)
+            {
+                // Multi-stage with stage 2 created - only apply placements if stage 2 has activity
+                var stage2HasCompletedMatches = matches.Any(m => m.StageNo == 2 && m.Status == MatchStatus.Completed);
+                shouldApplyPlacements = stage2HasCompletedMatches;
+            }
+
+            if (shouldApplyPlacements)
+            {
+                _ = ApplyPlacements(placementMatches, stats);
+            }
 
             foreach (var stat in stats.Values)
             {
