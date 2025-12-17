@@ -254,26 +254,26 @@ public class TournamentsController : ControllerBase
     [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> BulkAddPlayersFromExcel(
         int id,
-        [FromForm] IFormFile file,
+        [FromForm] BulkAddPlayersFromExcelModel model,
         CancellationToken ct)
     {
         try
         {
-            if (file == null || file.Length == 0)
+            if (model.File == null || model.File.Length == 0)
                 return BadRequest(new { message = "Invalid file: File is empty or not selected." });
 
             // Check file extension
-            var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+            var extension = Path.GetExtension(model.File.FileName).ToLowerInvariant();
             if (extension != ".xlsx" && extension != ".xls")
                 return BadRequest(new { message = "Invalid file: File must be Excel format (.xlsx or .xls)." });
 
             // Check file size (max 10MB)
-            if (file.Length > 10 * 1024 * 1024)
+            if (model.File.Length > 10 * 1024 * 1024)
                 return BadRequest(new { message = "Invalid file: File exceeds 10MB." });
 
             var ownerUserId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
             
-            using var stream = file.OpenReadStream();
+            using var stream = model.File.OpenReadStream();
             var resp = await _playerSvc.BulkAddPlayersFromExcelAsync(id, ownerUserId, stream, ct);
             return Ok(resp);
         }
