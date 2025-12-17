@@ -140,7 +140,7 @@ builder.Services.AddAuthentication(o =>
             ValidateIssuer = true,
             ValidIssuer = jwt["ValidIssuer"],
             ValidateAudience = true,
-            ValidAudiences = new[] { jwt["ValidAudience"]!, "table-scoring" }, // Chấp nhận cả user token và table token
+            ValidAudience = jwt["ValidAudience"],
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Secret"]!)),
             ValidateLifetime = true,
@@ -165,19 +165,9 @@ builder.Services.AddAuthentication(o =>
             },
             // ---------------------------------------------------------
 
-            // Bỏ qua table token - chỉ validate user JWT token
+            // Kiểm tra user bị khóa (Lockout Check - Tính năng của Code 2)
             OnTokenValidated = async context =>
             {
-                // Kiểm tra xem token có phải là table token không (có claim "scope" = "table-scoring")
-                var scope = context.Principal?.FindFirst("scope")?.Value;
-                if (!string.IsNullOrEmpty(scope) && scope == "table-scoring")
-                {
-                    // Đây là table token → bỏ qua validation, để controller tự xử lý
-                    context.Success();
-                    return;
-                }
-
-                // Đây là user token → kiểm tra user bị khóa như bình thường
                 var userManager = context.HttpContext.RequestServices
                     .GetRequiredService<UserManager<ApplicationUser>>();
                 var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -256,6 +246,7 @@ builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
 builder.Services.AddScoped<IPlayerProfileService, PlayerProfileService>();
 builder.Services.AddScoped<IPayoutService, PayoutService>(); 
 builder.Services.AddScoped<IOrganizerDashboardService, OrganizerDashboardService>();
+builder.Services.AddScoped<IOrganizerService, OrganizerService>();
 
 // Cloudinary
 builder.Services.AddSingleton(sp =>

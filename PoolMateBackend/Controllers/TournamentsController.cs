@@ -139,6 +139,48 @@ public class TournamentsController : ControllerBase
         return Ok(result);
     }
 
+    [HttpPost("{id}/register")]
+    [Authorize] // Requires user to be logged in
+    public async Task<IActionResult> RegisterForTournament(
+        int id,
+        [FromBody] RegisterForTournamentRequest request,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Validate phone number if provided
+            if (!string.IsNullOrWhiteSpace(request.Phone))
+            {
+                var phone = request.Phone.Trim();
+                if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
+                    return BadRequest(new
+                        { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+                request.Phone = phone;
+            }
+
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var tournamentPlayer = await _playerSvc.RegisterForTournamentAsync(id, userId, request, ct);
+
+            return Ok(new
+            {
+                message = "Registration successful! Your registration is pending approval from the organizer.",
+                tournamentPlayerId = tournamentPlayer.Id,
+                status = tournamentPlayer.Status
+            });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     [HttpPost("{id}/players")]
     public async Task<IActionResult> AddPlayer(
         int id,

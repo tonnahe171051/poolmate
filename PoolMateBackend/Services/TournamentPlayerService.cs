@@ -8,16 +8,19 @@ using PoolMate.Api.Common;
 using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Tournament;
 using PoolMate.Api.Models;
+using PoolMate.Api.Integrations.Email;
 
 namespace PoolMate.Api.Services;
 
 public class TournamentPlayerService : ITournamentPlayerService
 {
     private readonly ApplicationDbContext _db;
+    private readonly IEmailSender _emailSender;
 
-    public TournamentPlayerService(ApplicationDbContext db)
+    public TournamentPlayerService(ApplicationDbContext db, IEmailSender emailSender)
     {
         _db = db;
+        _emailSender = emailSender;
     }
 
     private static bool CanEditBracket(Tournament t)
@@ -271,8 +274,17 @@ public class TournamentPlayerService : ITournamentPlayerService
         var tournament = await _db.Tournaments.FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
         if (tournament is null || tournament.OwnerUserId != ownerUserId) return false;
 
-        var tp = await _db.TournamentPlayers.FirstOrDefaultAsync(x => x.Id == tpId && x.TournamentId == tournamentId, ct);
+        var tp = await _db.TournamentPlayers
+            .Include(tp => tp.Player)
+            .FirstOrDefaultAsync(x => x.Id == tpId && x.TournamentId == tournamentId, ct);
         if (tp is null) return false;
+
+        // Prevent unlinking if player self-registered (has a linked user account)
+        if (tp.Player?.UserId != null)
+        {
+            throw new InvalidOperationException(
+                "Cannot unlink this player profile. This player self-registered with their account and the profile link cannot be removed.");
+        }
 
         tp.PlayerId = null;
         await _db.SaveChangesAsync(ct);
@@ -467,5 +479,122 @@ public class TournamentPlayerService : ITournamentPlayerService
         }
 
         return result;
+    }
+
+    public async Task<TournamentPlayer> RegisterForTournamentAsync(
+        int tournamentId,
+        string userId,
+        RegisterForTournamentRequest request,
+        CancellationToken ct)
+    {
+        // Check tournament exists and online registration is enabled
+        var tournament = await _db.Tournaments
+            .Include(t => t.OwnerUser)
+            .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
+
+        if (tournament is null)
+            throw new KeyNotFoundException("Tournament not found.");
+
+        if (!tournament.OnlineRegistrationEnabled)
+            throw new InvalidOperationException("Online registration is not enabled for this tournament.");
+
+        if (!CanEditBracket(tournament))
+            throw new InvalidOperationException("Cannot register after tournament has started or completed.");
+
+        // Check bracket size limit
+        var (canAdd, currentCount, maxLimit) = await CanAddPlayersAsync(tournamentId, 1, ct);
+        if (!canAdd)
+        {
+            throw new InvalidOperationException(
+                $"Tournament is full ({currentCount}/{maxLimit}). Registration closed.");
+        }
+
+        // User MUST have a Player profile to self-register
+        var existingPlayer = await _db.Players
+            .AsNoTracking()
+            .FirstOrDefaultAsync(p => p.UserId == userId, ct);
+
+        if (existingPlayer == null)
+        {
+            throw new InvalidOperationException(
+                "You must create a player profile before registering for tournaments. Please complete your profile first.");
+        }
+
+        // Check if already registered using PlayerId (duplicate prevention)
+        var alreadyInTournament = await _db.TournamentPlayers
+            .AnyAsync(tp => tp.TournamentId == tournamentId && tp.PlayerId == existingPlayer.Id, ct);
+        
+        if (alreadyInTournament)
+            throw new InvalidOperationException("You have already registered for this tournament.");
+
+        // Create tournament player entry with linked Player profile
+        var tournamentPlayer = new TournamentPlayer
+        {
+            TournamentId = tournamentId,
+            PlayerId = existingPlayer.Id, // Always set - required Player profile
+            DisplayName = existingPlayer.FullName,
+            Nickname = existingPlayer.Nickname,
+            Email = existingPlayer.Email,
+            Phone = existingPlayer.Phone,
+            Country = existingPlayer.Country,
+            City = existingPlayer.City,
+            SkillLevel = existingPlayer.SkillLevel,
+            Status = TournamentPlayerStatus.Unconfirmed
+        };
+
+        _db.TournamentPlayers.Add(tournamentPlayer);
+        await _db.SaveChangesAsync(ct);
+
+        // Send email notification to organizer
+        try
+        {
+            var organizerEmail = await GetOrganizerEmailAsync(tournament.OwnerUserId, ct);
+            if (!string.IsNullOrEmpty(organizerEmail))
+            {
+                var subject = $"New Registration for {tournament.Name}";
+                var body = $@"
+                    <h2>New Player Registration</h2>
+                    <p>A new player has registered for your tournament <strong>{tournament.Name}</strong>.</p>
+                    <h3>Player Details:</h3>
+                    <ul>
+                        <li><strong>Name:</strong> {tournamentPlayer.DisplayName}</li>
+                        <li><strong>Nickname:</strong> {tournamentPlayer.Nickname ?? "N/A"}</li>
+                        <li><strong>Email:</strong> {tournamentPlayer.Email ?? "N/A"}</li>
+                        <li><strong>Phone:</strong> {tournamentPlayer.Phone ?? "N/A"}</li>
+                        <li><strong>Country:</strong> {tournamentPlayer.Country ?? "N/A"}</li>
+                        <li><strong>City:</strong> {tournamentPlayer.City ?? "N/A"}</li>
+                        <li><strong>Profile Status:</strong> Linked (cannot be unlinked)</li>
+                    </ul>
+                    <p><strong>Note:</strong> This player self-registered with their linked profile. The profile connection cannot be removed.</p>
+                    <p>Please review and approve the registration in your tournament management dashboard.</p>
+                ";
+
+                await _emailSender.SendAsync(organizerEmail, subject, body, ct);
+            }
+        }
+        catch (Exception)
+        {
+            
+        }
+
+        return tournamentPlayer;
+    }
+
+    private async Task<string?> GetOrganizerEmailAsync(string ownerUserId, CancellationToken ct)
+    {
+        // Try to get organizer email first (business email)
+        var organizer = await _db.Organizers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(o => o.UserId == ownerUserId, ct);
+
+        if (organizer != null && !string.IsNullOrEmpty(organizer.Email))
+            return organizer.Email;
+
+        // Fallback to user's personal email
+        var user = await _db.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == ownerUserId, ct);
+
+        return user?.Email;
     }
 }
