@@ -22,7 +22,7 @@
 		</PackageReference>
 		<PackageReference Include="MailKit" Version="4.11.0" />
 		<PackageReference Include="CloudinaryDotNet" Version="1.27.4" />
-
+		<PackageReference Include="EPPlus" Version="7.6.0" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -249,6 +249,53 @@ public class TournamentsController : ControllerBase
         }
     }
 
+    [HttpPost("{id}/players/import-excel")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
+    public async Task<IActionResult> BulkAddPlayersFromExcel(
+        int id,
+        [FromForm] IFormFile file,
+        CancellationToken ct)
+    {
+        try
+        {
+            if (file == null || file.Length == 0)
+                return BadRequest(new { message = "Invalid file: File is empty or not selected." });
+
+            // Check file extension
+            var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (extension != ".xlsx" && extension != ".xls")
+                return BadRequest(new { message = "Invalid file: File must be Excel format (.xlsx or .xls)." });
+
+            // Check file size (max 10MB)
+            if (file.Length > 10 * 1024 * 1024)
+                return BadRequest(new { message = "Invalid file: File exceeds 10MB." });
+
+            var ownerUserId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            
+            using var stream = file.OpenReadStream();
+            var resp = await _playerSvc.BulkAddPlayersFromExcelAsync(id, ownerUserId, stream, ct);
+            return Ok(resp);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+    }
+
+    [HttpGet("players/template")]
+    [Authorize(Roles = UserRoles.ORGANIZER)]
+    public IActionResult DownloadPlayersTemplate()
+    {
+        var fileBytes = _playerSvc.GeneratePlayersTemplate();
+        return File(fileBytes, 
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+            "Players_Template.xlsx");
+    }
+
     [HttpGet("players/search")]
     [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> SearchPlayers([FromQuery] string q, [FromQuery] int limit = 10,
