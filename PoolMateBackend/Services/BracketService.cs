@@ -1769,7 +1769,7 @@ namespace PoolMate.Api.Services
                         Player2TpId = p2?.TpId,
                         Player1SourceType = p1Source,
                         Player2SourceType = p2Source,
-                        Status = MatchStatus.NotStarted
+                        Status = MatchStatus.NotStarted,
                     });
                 }
 
@@ -1943,7 +1943,7 @@ namespace PoolMate.Api.Services
                         Player2TpId = p2?.TpId,
                         Player1SourceType = roundNo == 1 ? MatchSlotSourceType.Seed : null,
                         Player2SourceType = roundNo == 1 ? MatchSlotSourceType.Seed : null,
-                        Status = MatchStatus.NotStarted
+                        Status = MatchStatus.NotStarted,
                     });
                 }
 
@@ -1986,7 +1986,7 @@ namespace PoolMate.Api.Services
                         Bracket = BracketSide.Losers,
                         RoundNo = round,
                         PositionInRound = pos,
-                        Status = MatchStatus.NotStarted
+                        Status = MatchStatus.NotStarted,
                     });
                 }
             }
@@ -2013,7 +2013,7 @@ namespace PoolMate.Api.Services
                     Bracket = BracketSide.Finals,
                     RoundNo = 1,
                     PositionInRound = 1,
-                    Status = MatchStatus.NotStarted
+                    Status = MatchStatus.NotStarted,
                 }
             };
         }

@@ -9,6 +9,7 @@ using PoolMate.Api.Hubs;
 using PoolMate.Api.Integrations.Cloudinary36;
 using PoolMate.Api.Integrations.Email;
 using PoolMate.Api.Integrations.FargoRate;
+using PoolMate.Api.Middleware;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System.Text;
@@ -227,6 +228,12 @@ builder.Services.AddHttpClient<IFargoRateService, FargoRateService>(client =>
 // Add Memory Cache
 builder.Services.AddMemoryCache();
 
+
+builder.Services.AddDistributedMemoryCache(); // Switch to AddStackExchangeRedisCache for production
+
+// Banned User Cache Service - Real-time ban checking
+builder.Services.AddScoped<IBannedUserCacheService, BannedUserCacheService>();
+
 builder.Services.Configure<TableTokenOptions>(builder.Configuration.GetSection(TableTokenOptions.SectionName));
 builder.Services.AddSingleton<IMatchLockService, MatchLockService>();
 builder.Services.AddScoped<ITableTokenService, TableTokenService>();
@@ -332,10 +339,14 @@ else
 }
 
 app.UseAuthentication();
+
+app.UseBannedUserCheck();
+
 app.UseAuthorization();
 
 app.MapControllers();
 app.MapHub<TournamentHub>("/hubs/tournament");
+app.MapHub<AppHub>("/hubs/app"); // Real-time notifications (logout commands, alerts)
 app.Run();
 
 // Required for WebApplicationFactory to access Program class in integration tests

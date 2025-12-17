@@ -493,7 +493,7 @@ public class AdminPlayerService : IAdminPlayerService
     {
         var now = DateTime.UtcNow;
         var oneYearAgo = now.AddYears(-1);
-        var issueTypeLower = issueType.Trim().ToLower(); 
+        var issueTypeLower = issueType.Trim().ToLower();
 
         var query = _db.Players.AsNoTracking();
 
@@ -645,7 +645,7 @@ public class AdminPlayerService : IAdminPlayerService
                 "missing-skill" => "Missing skill level",
                 "inactive-1y" => "Inactive > 1 year",
                 "never-played" => "Never played",
-                "potential-duplicates" => "Potential duplicate", 
+                "potential-duplicates" => "Potential duplicate",
                 _ => "Unknown issue"
             };
 
@@ -801,119 +801,211 @@ public class AdminPlayerService : IAdminPlayerService
             return Response.Error($"Error exporting players: {ex.Message}");
         }
     }
-
+    
     public async Task<Response> MergePlayersAsync(MergePlayerRequestDto request, CancellationToken ct = default)
-{
-    // 1. Validate Input
-    if (request.SourcePlayerIds == null || !request.SourcePlayerIds.Any())
-        return Response.Error("No source players provided.");
-    
-    if (request.SourcePlayerIds.Contains(request.TargetPlayerId))
-        return Response.Error("Target player cannot be in the source list.");
-
-    // Bắt đầu Transaction để đảm bảo an toàn dữ liệu
-    await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-    try
     {
-        // 2. Lấy hồ sơ Gốc (Target)
-        var targetPlayer = await _db.Players
-            .Include(p => p.User)
-            .FirstOrDefaultAsync(p => p.Id == request.TargetPlayerId, ct);
-
-        if (targetPlayer == null)
-            return Response.Error($"Target player (ID: {request.TargetPlayerId}) not found.");
-
-        // 3. Lấy danh sách hồ sơ Rác (Source)
-        var sourcePlayers = await _db.Players
-            .Where(p => request.SourcePlayerIds.Contains(p.Id))
-            .ToListAsync(ct);
-
-        if (sourcePlayers.Count != request.SourcePlayerIds.Count)
-            return Response.Error("One or more source players not found.");
-
-        // 4. LOGIC GỘP (QUAN TRỌNG)
-
-        // A. Chuẩn bị dữ liệu để chuyển Lịch Sử Thi Đấu
+        // =============================================================================
+        // STEP 1: INPUT VALIDATION
+        // =============================================================================
         
-        // Lấy tất cả lịch sử thi đấu của các Source Player
-        var sourceHistory = await _db.TournamentPlayers
-            .Where(tp => request.SourcePlayerIds.Contains(tp.PlayerId ?? 0))
-            .ToListAsync(ct);
+        // 1.1 Validate that Source and Target are different players
+        if (request.SourcePlayerId == request.TargetPlayerId)
+            return Response.Error("Cannot merge a player into themselves. Source and Target must be different.");
 
-        // 🔥 FIX QUAN TRỌNG: Lấy danh sách các giải đấu mà Target Player ĐÃ tham gia
-        // Mục đích: Tránh gộp vào giải mà Target đã có mặt -> Gây lỗi trùng lặp (Unique Constraint)
-        var targetTournamentIds = await _db.TournamentPlayers
-            .Where(tp => tp.PlayerId == targetPlayer.Id)
-            .Select(tp => tp.TournamentId)
-            .ToListAsync(ct);
+        // 1.2 Defensive check for valid IDs
+        if (request.SourcePlayerId <= 0)
+            return Response.Error("Invalid Source Player ID.");
         
-        // Dùng HashSet để tra cứu cho nhanh
-        var targetTournamentIdSet = new HashSet<int>(targetTournamentIds);
-        int movedCount = 0;
+        if (request.TargetPlayerId <= 0)
+            return Response.Error("Invalid Target Player ID.");
 
-        foreach (var record in sourceHistory)
+        // =============================================================================
+        // STEP 2: DATABASE TRANSACTION
+        // All operations must be atomic - either all succeed or all rollback
+        // =============================================================================
+        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+        
+        try
         {
-            // Kiểm tra: Nếu Target Player ĐÃ ở trong giải đấu này rồi
-            if (targetTournamentIdSet.Contains(record.TournamentId))
-            {
-                // Kịch bản: Cả Source và Target cùng đánh 1 giải.
-                // Giải pháp: KHÔNG gộp record này sang Target.
-                // Khi Source Player bị xóa (dòng lệnh cuối), record này sẽ tự động set PlayerId = NULL (do OnDelete.SetNull).
-                // Các trận đấu (Match) của record này vẫn tồn tại nhưng sẽ không link tới Player nào cả.
-                continue; 
-            }
+            // =============================================================================
+            // STEP 3: LOAD PLAYER PROFILES
+            // =============================================================================
+            
+            // 3.1 Load Target Player (the profile to keep)
+            var targetPlayer = await _db.Players
+                .FirstOrDefaultAsync(p => p.Id == request.TargetPlayerId, ct);
 
-            // Nếu Target chưa có trong giải này -> An toàn để chuyển ownership
-            record.PlayerId = targetPlayer.Id;
-            movedCount++;
-        }
+            if (targetPlayer == null)
+                return Response.Error($"Target player (ID: {request.TargetPlayerId}) not found.");
 
-        // B. Xử lý Tài khoản liên kết (User Link Safety)
-        // Nếu Target chưa có User, mà một trong các Source lại có User -> Chuyển User sang Target
-        if (targetPlayer.UserId == null)
-        {
-            var sourceWithUser = sourcePlayers.FirstOrDefault(p => p.UserId != null);
-            if (sourceWithUser != null)
+            // 3.2 Load Source Player (the profile to merge/delete)
+            var sourcePlayer = await _db.Players
+                .FirstOrDefaultAsync(p => p.Id == request.SourcePlayerId, ct);
+
+            if (sourcePlayer == null)
+                return Response.Error($"Source player (ID: {request.SourcePlayerId}) not found.");
+
+            // =============================================================================
+            // STEP 4: IDENTITY SAFETY VALIDATION
+            // Prevent merging two profiles that belong to DIFFERENT user accounts
+            // =============================================================================
+            if (!string.IsNullOrEmpty(targetPlayer.UserId) && 
+                !string.IsNullOrEmpty(sourcePlayer.UserId) &&
+                targetPlayer.UserId != sourcePlayer.UserId)
             {
-                targetPlayer.UserId = sourceWithUser.UserId;
-                // Clear bên source để tránh lỗi unique UserID (nếu có constraint 1-1)
-                sourceWithUser.UserId = null;
-            }
-        }
-        else
-        {
-            // Nếu Target đã có User, mà Source cũng có User khác -> CHẶN
-            // Vì không thể gộp 2 tài khoản đăng nhập khác nhau làm 1 được.
-            if (sourcePlayers.Any(p => p.UserId != null && p.UserId != targetPlayer.UserId))
-            {
-                await transaction.RollbackAsync(ct);
                 return Response.Error(
-                    "Cannot merge: One of the source players belongs to a different User account (Email conflict).");
+                    "Cannot merge: Both players are linked to different User accounts. " +
+                    "This would create data integrity issues. Please unlink one account first.");
             }
+
+            // =============================================================================
+            // STEP 5: TOURNAMENT HISTORY MERGE (HIGH PERFORMANCE WITH ExecuteUpdateAsync)
+            // =============================================================================
+
+            // 5.1 Get list of tournaments where Target already participated (conflict zone)
+            var targetTournamentIds = await _db.TournamentPlayers
+                .AsNoTracking()
+                .Where(tp => tp.PlayerId == targetPlayer.Id)
+                .Select(tp => tp.TournamentId)
+                .ToListAsync(ct);
+
+            // 5.2 Prepare Target's snapshot data for transfer
+            // These values will be used to update the transferred records
+            var targetFullName = targetPlayer.FullName;
+            var targetNickname = targetPlayer.Nickname;
+            var targetEmail = targetPlayer.Email;
+            var targetPhone = targetPlayer.Phone;
+            var targetCountry = targetPlayer.Country;
+            var targetCity = targetPlayer.City;
+            var targetSkillLevel = targetPlayer.SkillLevel;
+
+            // -----------------------------------------------------------------------------
+            // CASE A: CLEAN MERGE - Transfer records where Target has NOT participated
+            // Uses ExecuteUpdateAsync for batch update without loading entities into memory
+            // -----------------------------------------------------------------------------
+            int cleanMergeCount = await _db.TournamentPlayers
+                .Where(tp => tp.PlayerId == sourcePlayer.Id &&
+                             !targetTournamentIds.Contains(tp.TournamentId))
+                .ExecuteUpdateAsync(setters => setters
+                    // Transfer ownership to Target
+                    .SetProperty(tp => tp.PlayerId, targetPlayer.Id)
+                    // Update display name to Target's current name
+                    .SetProperty(tp => tp.DisplayName, targetFullName)
+                    // Update snapshot fields - prioritize Target's data if available, else keep existing
+                    .SetProperty(tp => tp.Nickname, 
+                        tp => !string.IsNullOrEmpty(targetNickname) ? targetNickname : tp.Nickname)
+                    .SetProperty(tp => tp.Email, 
+                        tp => !string.IsNullOrEmpty(targetEmail) ? targetEmail : tp.Email)
+                    .SetProperty(tp => tp.Phone, 
+                        tp => !string.IsNullOrEmpty(targetPhone) ? targetPhone : tp.Phone)
+                    .SetProperty(tp => tp.Country, 
+                        tp => !string.IsNullOrEmpty(targetCountry) ? targetCountry : tp.Country)
+                    .SetProperty(tp => tp.City, 
+                        tp => !string.IsNullOrEmpty(targetCity) ? targetCity : tp.City)
+                    .SetProperty(tp => tp.SkillLevel, 
+                        tp => targetSkillLevel.HasValue ? targetSkillLevel : tp.SkillLevel)
+                , ct);
+
+            // -----------------------------------------------------------------------------
+            // CASE B: CONFLICT MERGE - Handle records where BOTH players participated
+            // Orphan the record (PlayerId = NULL) and mark with " (Merged)" suffix
+            // This preserves tournament history while avoiding unique constraint violations
+            // -----------------------------------------------------------------------------
+            int conflictMergeCount = await _db.TournamentPlayers
+                .Where(tp => tp.PlayerId == sourcePlayer.Id &&
+                             targetTournamentIds.Contains(tp.TournamentId))
+                .ExecuteUpdateAsync(setters => setters
+                    // Orphan the record - disconnect from any Player profile
+                    .SetProperty(tp => tp.PlayerId, (int?)null)
+                    // Append " (Merged)" to DisplayName for admin visibility
+                    // This helps admins identify records that were orphaned during merge
+                    .SetProperty(tp => tp.DisplayName, tp => tp.DisplayName + " (Merged)")
+                , ct);
+
+            // =============================================================================
+            // STEP 6: PROFILE SYNCHRONIZATION (Fill-in-the-blanks)
+            // Copy missing data from Source to Target (Target's existing data takes priority)
+            // =============================================================================
+            
+            // Fill missing Email
+            if (string.IsNullOrEmpty(targetPlayer.Email) && !string.IsNullOrEmpty(sourcePlayer.Email))
+                targetPlayer.Email = sourcePlayer.Email;
+
+            // Fill missing Phone
+            if (string.IsNullOrEmpty(targetPlayer.Phone) && !string.IsNullOrEmpty(sourcePlayer.Phone))
+                targetPlayer.Phone = sourcePlayer.Phone;
+
+            // Fill missing Nickname
+            if (string.IsNullOrEmpty(targetPlayer.Nickname) && !string.IsNullOrEmpty(sourcePlayer.Nickname))
+                targetPlayer.Nickname = sourcePlayer.Nickname;
+
+            // Fill missing Country
+            if (string.IsNullOrEmpty(targetPlayer.Country) && !string.IsNullOrEmpty(sourcePlayer.Country))
+                targetPlayer.Country = sourcePlayer.Country;
+
+            // Fill missing City
+            if (string.IsNullOrEmpty(targetPlayer.City) && !string.IsNullOrEmpty(sourcePlayer.City))
+                targetPlayer.City = sourcePlayer.City;
+
+            // Fill missing Skill Level
+            if (!targetPlayer.SkillLevel.HasValue && sourcePlayer.SkillLevel.HasValue)
+                targetPlayer.SkillLevel = sourcePlayer.SkillLevel;
+
+            // =============================================================================
+            // STEP 7: USER ACCOUNT HANDLING
+            // Transfer UserId from Source to Target if Target doesn't have one
+            // =============================================================================
+            if (string.IsNullOrEmpty(targetPlayer.UserId) && !string.IsNullOrEmpty(sourcePlayer.UserId))
+            {
+                // Transfer the user account link to Target
+                targetPlayer.UserId = sourcePlayer.UserId;
+                // Disconnect Source from the user account before deletion
+                sourcePlayer.UserId = null;
+            }
+
+            // =============================================================================
+            // STEP 8: CLEANUP - Delete Source Player
+            // The Source profile is no longer needed after merge
+            // =============================================================================
+            
+            // Store source info for response before deletion
+            var sourcePlayerName = sourcePlayer.FullName;
+            var sourcePlayerId = sourcePlayer.Id;
+            
+            // Remove the source player from database
+            _db.Players.Remove(sourcePlayer);
+
+            // =============================================================================
+            // STEP 9: COMMIT TRANSACTION
+            // =============================================================================
+            await _db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            // =============================================================================
+            // STEP 10: RETURN SUCCESS RESPONSE
+            // =============================================================================
+            return Response.Ok(new
+            {
+                TargetPlayerId = targetPlayer.Id,
+                TargetPlayerName = targetPlayer.FullName,
+                DeletedSourcePlayerId = sourcePlayerId,
+                DeletedSourcePlayerName = sourcePlayerName,
+                TransferredTournamentRecords = cleanMergeCount,
+                OrphanedConflictRecords = conflictMergeCount,
+                Message = $"Successfully merged '{sourcePlayerName}' (ID: {sourcePlayerId}) " +
+                          $"into '{targetPlayer.FullName}' (ID: {targetPlayer.Id}). " +
+                          $"Transferred {cleanMergeCount} tournament record(s), " +
+                          $"orphaned {conflictMergeCount} conflicting record(s)."
+            });
         }
-
-        // 5. Xóa các Source Player
-        // Nhờ cấu hình OnDelete(SetNull), các TournamentPlayers còn sót lại (do trùng giải) sẽ tự update PlayerId = NULL
-        _db.Players.RemoveRange(sourcePlayers);
-        
-        await _db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
-
-        return Response.Ok(new
+        catch (Exception ex)
         {
-            MergedCount = sourcePlayers.Count,
-            TargetPlayerName = targetPlayer.FullName,
-            TargetPlayerId = targetPlayer.Id,
-            MovedTournamentRecords = movedCount
-        }, "Players merged successfully.");
+            // Rollback all changes if any error occurs
+            await transaction.RollbackAsync(ct);
+            return Response.Error($"Merge operation failed: {ex.Message}");
+        }
     }
-    catch (Exception ex)
-    {
-        await transaction.RollbackAsync(ct);
-        return Response.Error($"Merge failed: {ex.Message}");
-    }
-}
-    
+
 
     private IQueryable<Player> ApplyPlayerFilters(IQueryable<Player> query, PlayerFilterDto filter)
     {
