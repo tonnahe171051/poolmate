@@ -530,8 +530,6 @@ public class AdminUserService : IAdminUserService
                 TotalTournaments = countTournaments,
                 TotalPosts = countPosts,
                 AccountCreatedAt = user.CreatedAt,
-                LastActivityAt = lastActivityAt ?? user.CreatedAt,
-                FailedLoginAttempts = user.AccessFailedCount,
                 LockoutEnd = user.LockoutEnd?.DateTime,
                 IsLockedOut = user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow
             };
@@ -713,7 +711,7 @@ public class AdminUserService : IAdminUserService
         }
     }
 
-    
+
     public async Task<Response> ReactivateUserAsync(string userId, CancellationToken ct)
     {
         try
@@ -1093,7 +1091,7 @@ public class AdminUserService : IAdminUserService
             return Response.Error("Error processing bulk deactivate operation");
         }
     }
-    
+
     public async Task<Response> BulkReactivateUsersAsync(BulkReactivateUsersDto request, CancellationToken ct)
     {
         try
@@ -1285,26 +1283,32 @@ public class AdminUserService : IAdminUserService
         {
             // 1. Khởi tạo Query
             var query = _db.Users.AsNoTracking().AsQueryable();
-            // 2. Áp dụng bộ lọc (Tái sử dụng code)
+
+            // 2. Áp dụng bộ lọc
             query = ApplyUserFilters(query, filter);
+
             // 3. Lấy dữ liệu User 
             var users = await query
                 .OrderByDescending(u => u.CreatedAt)
                 .ToListAsync(ct);
-            // 4. 🚀 TỐI ƯU HIỆU NĂNG: Lấy Roles (Batch Query)
+
+            // 4. TỐI ƯU HIỆU NĂNG: Lấy Roles (Batch Query)
             var userIds = users.Select(u => u.Id).ToList();
             var userRolesMap = await _db.UserRoles
                 .Where(ur => userIds.Contains(ur.UserId))
                 .Join(_db.Roles, ur => ur.RoleId, r => r.Id, (ur, r) => new { ur.UserId, RoleName = r.Name })
                 .ToListAsync(ct);
 
-            // Gom nhóm roles theo UserId để dễ tra cứu
             var rolesLookup = userRolesMap
                 .GroupBy(x => x.UserId)
                 .ToDictionary(g => g.Key, g => g.Select(x => x.RoleName).ToList());
 
             // 5. Tạo CSV
             var csv = new StringBuilder();
+            csv.Append('\uFEFF');
+
+            csv.AppendLine("sep=,");
+
             csv.AppendLine(
                 "UserId,UserName,Email,EmailConfirmed,PhoneNumber,PhoneConfirmed,FullName,Nickname,Country,City,Roles,CreatedAt,IsLockedOut,LockoutEnd");
 
@@ -1313,6 +1317,7 @@ public class AdminUserService : IAdminUserService
                 var roles = rolesLookup.ContainsKey(user.Id)
                     ? string.Join(";", rolesLookup[user.Id])
                     : "";
+
                 var fullName = $"{user.FirstName} {user.LastName}".Trim();
                 var isLockedOut = user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow;
 
@@ -1327,7 +1332,7 @@ public class AdminUserService : IAdminUserService
                     $"{EscapeCsv(user.Nickname)}," +
                     $"{EscapeCsv(user.Country)}," +
                     $"{EscapeCsv(user.City)}," +
-                    $"{EscapeCsv(roles)}," +
+                    $"{EscapeCsv(roles)}," + 
                     $"{user.CreatedAt:yyyy-MM-dd HH:mm:ss}," +
                     $"{isLockedOut}," +
                     $"{EscapeCsv(user.LockoutEnd?.ToString("yyyy-MM-dd HH:mm:ss"))}"
@@ -1348,6 +1353,19 @@ public class AdminUserService : IAdminUserService
             _logger.LogError(ex, "Error exporting users");
             return Response.Error("Error exporting users");
         }
+    }
+    
+    private string EscapeCsv(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        value = value.Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ");
+        if (value.Contains(",") || value.Contains("\""))
+        {
+            value = value.Replace("\"", "\"\"");
+            return $"\"{value}\"";
+        }
+
+        return value;
     }
 
     private IQueryable<ApplicationUser> ApplyUserFilters(IQueryable<ApplicationUser> query, AdminUserFilterDto filter)
@@ -1400,12 +1418,5 @@ public class AdminUserService : IAdminUserService
         }
 
         return query;
-    }
-
-    private string EscapeCsv(string? value)
-    {
-        if (string.IsNullOrEmpty(value)) return "";
-        if (value.Contains("\"")) value = value.Replace("\"", "\"\"");
-        return $"\"{value}\"";
     }
 }
