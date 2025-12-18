@@ -21,6 +21,8 @@ public class TournamentTableService : ITournamentTableService
 
     private static bool CanEditBracket(Tournament t)
         => !(t.IsStarted || t.Status == TournamentStatus.InProgress || t.Status == TournamentStatus.Completed);
+     
+    private const int MaxTablesPerTournament = 128;
 
     public async Task<TournamentTable?> AddTournamentTableAsync(
         int tournamentId,
@@ -32,6 +34,12 @@ public class TournamentTableService : ITournamentTableService
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
         if (tournament is null || tournament.OwnerUserId != ownerUserId) return null;
+
+        var existingTableCount = await _db.TournamentTables.CountAsync(x => x.TournamentId == tournamentId, ct);
+        if (existingTableCount >= MaxTablesPerTournament)
+        {
+            throw new InvalidOperationException($"Cannot add more than {MaxTablesPerTournament} tables to a tournament.");
+        }    
 
         var table = new TournamentTable
         {
@@ -59,6 +67,12 @@ public class TournamentTableService : ITournamentTableService
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == tournamentId, ct);
         if (tournament is null || tournament.OwnerUserId != ownerUserId) return null;
+
+        var existingTableCount = await _db.TournamentTables.CountAsync(x => x.TournamentId == tournamentId, ct);
+        if (existingTableCount >= MaxTablesPerTournament)
+        {
+            throw new InvalidOperationException($"Cannot add more than {MaxTablesPerTournament} tables to a tournament.");
+        }    
 
         var result = new BulkAddTablesResult();
         var toAdd = new List<TournamentTable>();
