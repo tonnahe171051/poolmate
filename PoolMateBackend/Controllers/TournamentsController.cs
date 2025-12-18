@@ -703,7 +703,7 @@ public class TournamentsController : ControllerBase
     }
 
     [HttpGet("{id}/status-summary")]
-    [Authorize(Roles = UserRoles.ORGANIZER)]
+    [AllowAnonymous]
     public async Task<ActionResult<TournamentStatusSummaryDto>> GetTournamentStatusSummary(int id, CancellationToken ct)
     {
         try
