@@ -154,6 +154,7 @@ public class PlayerProfileController : ControllerBase
     }
     
     [HttpGet("{playerId}/stats")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ApiResponse<PlayerStatsDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)] // ✅ Đã thêm
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)] // ✅ Đã thêm
