@@ -40,6 +40,7 @@ namespace PoolMate.Api.Dtos.Tournament
 
         public string? FlyerUrl { get; set; }
 
+        public string? OwnerUserId { get; set; }
         public string CreatorName { get; set; } = default!;
         public VenueDto? Venue { get; set; }
 

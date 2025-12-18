@@ -541,6 +541,7 @@ public class TournamentService : ITournamentService
 
                 FlyerUrl = x.FlyerUrl,
 
+                OwnerUserId = x.OwnerUserId,
                 CreatorName = string.IsNullOrWhiteSpace(x.OwnerUser.FirstName) && string.IsNullOrWhiteSpace(x.OwnerUser.LastName)
                     ? x.OwnerUser.UserName!
                     : ((x.OwnerUser.FirstName ?? "").Trim() + " " + (x.OwnerUser.LastName ?? "").Trim()).Trim(),
