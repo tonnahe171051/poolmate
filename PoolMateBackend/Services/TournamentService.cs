@@ -28,18 +28,6 @@ public class TournamentService : ITournamentService
         return Math.Round(Math.Max(0, total), 2, MidpointRounding.AwayFromZero);
     }
 
-    private static void ApplyPayout(Tournament t)
-    {
-        if (t.PayoutMode == PayoutMode.Custom)
-        {
-            t.TotalPrize = Math.Max(0, t.TotalPrize ?? 0m);
-            return;
-        }
-
-        var players = t.BracketSizeEstimate ?? 0;
-        t.TotalPrize = ComputeTotal(players, t.EntryFee, t.AdminFee, t.AddedMoney);
-    }
-
     private static bool CanEditBracket(Tournament t)
         => !(t.IsStarted || t.Status == TournamentStatus.InProgress || t.Status == TournamentStatus.Completed);
     // end helpers
@@ -553,11 +541,10 @@ public class TournamentService : ITournamentService
 
                 FlyerUrl = x.FlyerUrl,
 
-                CreatorName = x.OwnerUser == null
-                    ? string.Empty
-                    : string.IsNullOrWhiteSpace(((x.OwnerUser.FirstName ?? string.Empty) + " " + (x.OwnerUser.LastName ?? string.Empty)).Trim())
-                        ? (x.OwnerUser.UserName ?? string.Empty)
-                        : ((x.OwnerUser.FirstName ?? string.Empty) + " " + (x.OwnerUser.LastName ?? string.Empty)).Trim(),
+                CreatorName = string.IsNullOrWhiteSpace(x.OwnerUser.FirstName) && string.IsNullOrWhiteSpace(x.OwnerUser.LastName)
+                    ? x.OwnerUser.UserName!
+                    : ((x.OwnerUser.FirstName ?? "").Trim() + " " + (x.OwnerUser.LastName ?? "").Trim()).Trim(),
+
                 Venue = x.Venue == null
                     ? null
                     : new VenueDto
