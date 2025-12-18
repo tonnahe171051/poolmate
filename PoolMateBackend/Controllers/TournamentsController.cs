@@ -6,6 +6,7 @@ using PoolMate.Api.Dtos.Tournament;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System.IO;
+using System.Linq.Expressions;
 using System.Security.Claims;
 using System.Text.RegularExpressions;
 
@@ -162,7 +163,7 @@ public class TournamentsController : ControllerBase
                 var phone = request.Phone.Trim();
                 if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
                     return BadRequest(new
-                        { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+                    { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
                 request.Phone = phone;
             }
 
@@ -206,7 +207,7 @@ public class TournamentsController : ControllerBase
                 var phone = model.Phone.Trim();
                 if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
                     return BadRequest(new
-                        { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+                    { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
 
                 model.Phone = phone;
             }
@@ -272,7 +273,7 @@ public class TournamentsController : ControllerBase
                 return BadRequest(new { message = "Invalid file: File exceeds 10MB." });
 
             var ownerUserId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-            
+
             using var stream = model.File.OpenReadStream();
             var resp = await _playerSvc.BulkAddPlayersFromExcelAsync(id, ownerUserId, stream, ct);
             return Ok(resp);
@@ -292,8 +293,8 @@ public class TournamentsController : ControllerBase
     public IActionResult DownloadPlayersTemplate()
     {
         var fileBytes = _playerSvc.GeneratePlayersTemplate();
-        return File(fileBytes, 
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+        return File(fileBytes,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "Players_Template.xlsx");
     }
 
@@ -367,7 +368,7 @@ public class TournamentsController : ControllerBase
                 var phone = model.Phone.Trim();
                 if (!Regex.IsMatch(phone, @"^\+?\d{10,15}$"))
                     return BadRequest(new
-                        { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
+                    { message = "Invalid phone number. Must be 10-15 digits, optional leading '+'." });
 
                 model.Phone = phone;
             }
@@ -396,21 +397,28 @@ public class TournamentsController : ControllerBase
         [FromBody] AddTournamentTableModel model,
         CancellationToken ct)
     {
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-
-        var table = await _tableSvc.AddTournamentTableAsync(id, userId, model, ct);
-        if (table is null)
-            return NotFound(new { message = "Tournament not found or not owned by you." });
-
-        return Ok(new
+        try
         {
-            id = table.Id,
-            label = table.Label,
-            message = "Table added successfully."
-        });
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+            var table = await _tableSvc.AddTournamentTableAsync(id, userId, model, ct);
+            if (table is null)
+                return NotFound(new { message = "Tournament not found or not owned by you." });
+
+            return Ok(new
+            {
+                id = table.Id,
+                label = table.Label,
+                message = "Table added successfully."
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("{id}/tables/bulk")]
@@ -420,28 +428,36 @@ public class TournamentsController : ControllerBase
         [FromBody] AddMultipleTournamentTablesModel model,
         CancellationToken ct)
     {
-        if (!ModelState.IsValid)
-            return BadRequest(ModelState);
-
-        if (model.EndNumber < model.StartNumber)
-            return BadRequest(new { message = "End number must be greater than or equal to start number." });
-
-        var tableCount = model.EndNumber - model.StartNumber + 1;
-        if (tableCount > 50)
-            return BadRequest(new { message = "Cannot add more than 50 tables at once." });
-
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-
-        var result = await _tableSvc.AddMultipleTournamentTablesAsync(id, userId, model, ct);
-        if (result is null)
-            return NotFound(new { message = "Tournament not found or not owned by you." });
-
-        return Ok(new
+        try
         {
-            addedCount = result.AddedCount,
-            tables = result.Added,
-            message = $"Successfully added {result.AddedCount} tables."
-        });
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            if (model.EndNumber < model.StartNumber)
+                return BadRequest(new { message = "End number must be greater than or equal to start number." });
+
+            var tableCount = model.EndNumber - model.StartNumber + 1;
+            if (tableCount > 50)
+                return BadRequest(new { message = "Cannot add more than 50 tables at once." });
+
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+            var result = await _tableSvc.AddMultipleTournamentTablesAsync(id, userId, model, ct);
+            if (result is null)
+                return NotFound(new { message = "Tournament not found or not owned by you." });
+
+            return Ok(new
+            {
+                addedCount = result.AddedCount,
+                tables = result.Added,
+                message = $"Successfully added {result.AddedCount} tables."
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+
     }
 
     [HttpPut("{tournamentId}/tables/{tableId}")]
