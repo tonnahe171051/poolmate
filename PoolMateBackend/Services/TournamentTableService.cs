@@ -69,10 +69,16 @@ public class TournamentTableService : ITournamentTableService
         if (tournament is null || tournament.OwnerUserId != ownerUserId) return null;
 
         var existingTableCount = await _db.TournamentTables.CountAsync(x => x.TournamentId == tournamentId, ct);
-        if (existingTableCount >= MaxTablesPerTournament)
+        
+        var tablesToAdd = model.EndNumber - model.StartNumber + 1;
+        var totalAfterAdd = existingTableCount + tablesToAdd;
+        
+        if (totalAfterAdd > MaxTablesPerTournament)
         {
-            throw new InvalidOperationException($"Cannot add more than {MaxTablesPerTournament} tables to a tournament.");
-        }    
+            var availableSlots = MaxTablesPerTournament - existingTableCount;
+            throw new InvalidOperationException(
+                $"Cannot add {tablesToAdd} tables. Tournament currently has {existingTableCount} tables and can only add {availableSlots} more (max {MaxTablesPerTournament}).");
+        }
 
         var result = new BulkAddTablesResult();
         var toAdd = new List<TournamentTable>();
