@@ -705,22 +705,21 @@ public class AdminPlayerService : IAdminPlayerService
         {
             var query = _db.Players.AsNoTracking().AsQueryable();
 
-            // 2. Tái sử dụng bộ lọc (DRY - Don't Repeat Yourself)
+            // 2. Tái sử dụng bộ lọc
             query = ApplyPlayerFilters(query, filter);
-            // 3. Tối ưu hóa việc lấy dữ liệu (Conditional Loading)
+
+            // 3. Tối ưu hóa việc lấy dữ liệu
             List<Player> players;
             if (includeTournamentHistory)
             {
-                // Chỉ Include khi user thực sự cần xuất lịch sử
                 players = await query
                     .Include(p => p.TournamentPlayers)
                     .ThenInclude(tp => tp.Tournament)
-                    .OrderByDescending(p => p.CreatedAt) // Nên sort để file đẹp
+                    .OrderByDescending(p => p.CreatedAt)
                     .ToListAsync(ct);
             }
             else
             {
-                // Nếu không cần lịch sử, chỉ lấy thông tin cơ bản (Query nhẹ hơn rất nhiều)
                 players = await query
                     .OrderByDescending(p => p.CreatedAt)
                     .ToListAsync(ct);
@@ -728,6 +727,9 @@ public class AdminPlayerService : IAdminPlayerService
 
             // 4. Xử lý CSV
             var sb = new System.Text.StringBuilder();
+            sb.Append('\uFEFF');
+            sb.AppendLine("sep=,");
+
             if (!includeTournamentHistory)
             {
                 sb.AppendLine("PlayerId,FullName,Nickname,Email,Phone,Country,City,SkillLevel,CreatedAt");
@@ -762,11 +764,12 @@ public class AdminPlayerService : IAdminPlayerService
                             Date = tp.Tournament!.StartUtc
                         })
                         .ToList();
-                    // Format history: "ID:Name:Date | ID:Name:Date"
+
                     var historyString = string.Join(" | ",
                         tournaments.Select(t => $"{t.TournamentId}:{t.Name}:{t.Date:yyyy-MM-dd}"));
 
                     var lastDate = tournaments.FirstOrDefault()?.Date;
+
                     sb.AppendLine(
                         $"{p.Id}," +
                         $"{EscapeCsv(p.FullName)}," +
@@ -778,7 +781,7 @@ public class AdminPlayerService : IAdminPlayerService
                         $"{p.CreatedAt:yyyy-MM-dd HH:mm:ss}," +
                         $"{tournaments.Count}," +
                         $"{(lastDate.HasValue ? lastDate.Value.ToString("yyyy-MM-dd") : "")}," +
-                        $"{EscapeCsv(historyString)}" // Escape cả history string vì nó có thể chứa ký tự lạ
+                        $"{EscapeCsv(historyString)}"
                     );
                 }
             }
@@ -786,7 +789,7 @@ public class AdminPlayerService : IAdminPlayerService
             var fileName = includeTournamentHistory
                 ? $"players_history_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv"
                 : $"players_list_{DateTime.UtcNow:yyyyMMdd_HHmmss}.csv";
-            // Trả về object chứa content để Controller chuyển thành File
+
             var exportResult = new FileExportDto
             {
                 FileName = fileName,
@@ -802,12 +805,25 @@ public class AdminPlayerService : IAdminPlayerService
         }
     }
     
+    private string EscapeCsv(string? field)
+    {
+        if (string.IsNullOrEmpty(field)) return "";
+        field = field.Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ");
+        if (field.Contains(",") || field.Contains("\""))
+        {
+            field = field.Replace("\"", "\"\"");
+            return $"\"{field}\"";
+        }
+
+        return field;
+    }
+
     public async Task<Response> MergePlayersAsync(MergePlayerRequestDto request, CancellationToken ct = default)
     {
         // =============================================================================
         // STEP 1: INPUT VALIDATION
         // =============================================================================
-        
+
         // 1.1 Validate that Source and Target are different players
         if (request.SourcePlayerId == request.TargetPlayerId)
             return Response.Error("Cannot merge a player into themselves. Source and Target must be different.");
@@ -815,7 +831,7 @@ public class AdminPlayerService : IAdminPlayerService
         // 1.2 Defensive check for valid IDs
         if (request.SourcePlayerId <= 0)
             return Response.Error("Invalid Source Player ID.");
-        
+
         if (request.TargetPlayerId <= 0)
             return Response.Error("Invalid Target Player ID.");
 
@@ -824,13 +840,13 @@ public class AdminPlayerService : IAdminPlayerService
         // All operations must be atomic - either all succeed or all rollback
         // =============================================================================
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-        
+
         try
         {
             // =============================================================================
             // STEP 3: LOAD PLAYER PROFILES
             // =============================================================================
-            
+
             // 3.1 Load Target Player (the profile to keep)
             var targetPlayer = await _db.Players
                 .FirstOrDefaultAsync(p => p.Id == request.TargetPlayerId, ct);
@@ -849,7 +865,7 @@ public class AdminPlayerService : IAdminPlayerService
             // STEP 4: IDENTITY SAFETY VALIDATION
             // Prevent merging two profiles that belong to DIFFERENT user accounts
             // =============================================================================
-            if (!string.IsNullOrEmpty(targetPlayer.UserId) && 
+            if (!string.IsNullOrEmpty(targetPlayer.UserId) &&
                 !string.IsNullOrEmpty(sourcePlayer.UserId) &&
                 targetPlayer.UserId != sourcePlayer.UserId)
             {
@@ -887,24 +903,24 @@ public class AdminPlayerService : IAdminPlayerService
                 .Where(tp => tp.PlayerId == sourcePlayer.Id &&
                              !targetTournamentIds.Contains(tp.TournamentId))
                 .ExecuteUpdateAsync(setters => setters
-                    // Transfer ownership to Target
-                    .SetProperty(tp => tp.PlayerId, targetPlayer.Id)
-                    // Update display name to Target's current name
-                    .SetProperty(tp => tp.DisplayName, targetFullName)
-                    // Update snapshot fields - prioritize Target's data if available, else keep existing
-                    .SetProperty(tp => tp.Nickname, 
-                        tp => !string.IsNullOrEmpty(targetNickname) ? targetNickname : tp.Nickname)
-                    .SetProperty(tp => tp.Email, 
-                        tp => !string.IsNullOrEmpty(targetEmail) ? targetEmail : tp.Email)
-                    .SetProperty(tp => tp.Phone, 
-                        tp => !string.IsNullOrEmpty(targetPhone) ? targetPhone : tp.Phone)
-                    .SetProperty(tp => tp.Country, 
-                        tp => !string.IsNullOrEmpty(targetCountry) ? targetCountry : tp.Country)
-                    .SetProperty(tp => tp.City, 
-                        tp => !string.IsNullOrEmpty(targetCity) ? targetCity : tp.City)
-                    .SetProperty(tp => tp.SkillLevel, 
-                        tp => targetSkillLevel.HasValue ? targetSkillLevel : tp.SkillLevel)
-                , ct);
+                        // Transfer ownership to Target
+                        .SetProperty(tp => tp.PlayerId, targetPlayer.Id)
+                        // Update display name to Target's current name
+                        .SetProperty(tp => tp.DisplayName, targetFullName)
+                        // Update snapshot fields - prioritize Target's data if available, else keep existing
+                        .SetProperty(tp => tp.Nickname,
+                            tp => !string.IsNullOrEmpty(targetNickname) ? targetNickname : tp.Nickname)
+                        .SetProperty(tp => tp.Email,
+                            tp => !string.IsNullOrEmpty(targetEmail) ? targetEmail : tp.Email)
+                        .SetProperty(tp => tp.Phone,
+                            tp => !string.IsNullOrEmpty(targetPhone) ? targetPhone : tp.Phone)
+                        .SetProperty(tp => tp.Country,
+                            tp => !string.IsNullOrEmpty(targetCountry) ? targetCountry : tp.Country)
+                        .SetProperty(tp => tp.City,
+                            tp => !string.IsNullOrEmpty(targetCity) ? targetCity : tp.City)
+                        .SetProperty(tp => tp.SkillLevel,
+                            tp => targetSkillLevel.HasValue ? targetSkillLevel : tp.SkillLevel)
+                    , ct);
 
             // -----------------------------------------------------------------------------
             // CASE B: CONFLICT MERGE - Handle records where BOTH players participated
@@ -915,18 +931,18 @@ public class AdminPlayerService : IAdminPlayerService
                 .Where(tp => tp.PlayerId == sourcePlayer.Id &&
                              targetTournamentIds.Contains(tp.TournamentId))
                 .ExecuteUpdateAsync(setters => setters
-                    // Orphan the record - disconnect from any Player profile
-                    .SetProperty(tp => tp.PlayerId, (int?)null)
-                    // Append " (Merged)" to DisplayName for admin visibility
-                    // This helps admins identify records that were orphaned during merge
-                    .SetProperty(tp => tp.DisplayName, tp => tp.DisplayName + " (Merged)")
-                , ct);
+                        // Orphan the record - disconnect from any Player profile
+                        .SetProperty(tp => tp.PlayerId, (int?)null)
+                        // Append " (Merged)" to DisplayName for admin visibility
+                        // This helps admins identify records that were orphaned during merge
+                        .SetProperty(tp => tp.DisplayName, tp => tp.DisplayName + " (Merged)")
+                    , ct);
 
             // =============================================================================
             // STEP 6: PROFILE SYNCHRONIZATION (Fill-in-the-blanks)
             // Copy missing data from Source to Target (Target's existing data takes priority)
             // =============================================================================
-            
+
             // Fill missing Email
             if (string.IsNullOrEmpty(targetPlayer.Email) && !string.IsNullOrEmpty(sourcePlayer.Email))
                 targetPlayer.Email = sourcePlayer.Email;
@@ -967,11 +983,11 @@ public class AdminPlayerService : IAdminPlayerService
             // STEP 8: CLEANUP - Delete Source Player
             // The Source profile is no longer needed after merge
             // =============================================================================
-            
+
             // Store source info for response before deletion
             var sourcePlayerName = sourcePlayer.FullName;
             var sourcePlayerId = sourcePlayer.Id;
-            
+
             // Remove the source player from database
             _db.Players.Remove(sourcePlayer);
 
@@ -1077,16 +1093,5 @@ public class AdminPlayerService : IAdminPlayerService
         }
 
         return query;
-    }
-
-    private string EscapeCsv(string? value)
-    {
-        if (string.IsNullOrEmpty(value)) return "";
-        if (value.Contains("\""))
-        {
-            value = value.Replace("\"", "\"\"");
-        }
-
-        return $"\"{value}\"";
     }
 }
