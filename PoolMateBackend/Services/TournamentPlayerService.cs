@@ -783,20 +783,18 @@ public class TournamentPlayerService : ITournamentPlayerService
             {
                 var subject = $"New Registration for {tournament.Name}";
                 var body = $@"
-                    <h2>New Player Registration</h2>
-                    <p>A new player has registered for your tournament <strong>{tournament.Name}</strong>.</p>
-                    <h3>Player Details:</h3>
-                    <ul>
-                        <li><strong>Name:</strong> {tournamentPlayer.DisplayName}</li>
-                        <li><strong>Nickname:</strong> {tournamentPlayer.Nickname ?? "N/A"}</li>
-                        <li><strong>Email:</strong> {tournamentPlayer.Email ?? "N/A"}</li>
-                        <li><strong>Phone:</strong> {tournamentPlayer.Phone ?? "N/A"}</li>
-                        <li><strong>Country:</strong> {tournamentPlayer.Country ?? "N/A"}</li>
-                        <li><strong>City:</strong> {tournamentPlayer.City ?? "N/A"}</li>
-                        <li><strong>Profile Status:</strong> Linked (cannot be unlinked)</li>
-                    </ul>
-                    <p><strong>Note:</strong> This player self-registered with their linked profile. The profile connection cannot be removed.</p>
-                    <p>Please review and approve the registration in your tournament management dashboard.</p>
+                    New Player Registration
+                    A new player has registered for your tournament {tournament.Name}
+                    Player Details:
+                    - Name: {tournamentPlayer.DisplayName}
+                    - Nickname: {tournamentPlayer.Nickname ?? "N/A"}
+                    - Email: {tournamentPlayer.Email ?? "N/A"}
+                    - Phone: {tournamentPlayer.Phone ?? "N/A"}
+                    - Country: {tournamentPlayer.Country ?? "N/A"}
+                    - City: {tournamentPlayer.City ?? "N/A"}
+                    - Profile Status: Linked (cannot be unlinked)   
+                    Note: This player self-registered with their linked profile. The profile connection cannot be removed.
+                    Please review and approve the registration in your tournament management dashboard.
                 ";
 
                 await _emailSender.SendAsync(organizerEmail, subject, body, ct);

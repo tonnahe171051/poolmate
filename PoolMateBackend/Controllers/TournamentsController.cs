@@ -105,9 +105,16 @@ public class TournamentsController : ControllerBase
     [Authorize(Roles = UserRoles.ORGANIZER)]
     public async Task<IActionResult> Start(int id, CancellationToken ct)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        var ok = await _svc.StartAsync(id, userId, ct);
-        return ok ? Ok(new { id }) : Forbid();
+        try
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+            var ok = await _svc.StartAsync(id, userId, ct);
+            return ok ? Ok(new { id }) : Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpGet("payout-templates")]
