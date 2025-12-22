@@ -4,7 +4,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
 using PoolMate.Api.Data;
-using PoolMate.Api.Dtos.Admin.Users;
 using PoolMate.Api.Hubs;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
@@ -13,9 +12,9 @@ using Xunit;
 namespace PoolMateBackend.Tests.UnitTests.Services.AdminUser
 {
     /// <summary>
-    /// Unit Tests for AdminUserService.BulkReactivateUsersAsync
+    /// Unit Tests for AdminUserService.ReactivateUserAsync
     /// </summary>
-    public class AdminUserServiceBulkReactivateUsersAsyncTests : IDisposable
+    public class AdminUserServiceReactivateUserAsyncTests : IDisposable
     {
         private readonly Mock<UserManager<ApplicationUser>> _mockUserManager;
         private readonly Mock<RoleManager<IdentityRole>> _mockRoleManager;
@@ -25,7 +24,7 @@ namespace PoolMateBackend.Tests.UnitTests.Services.AdminUser
         private readonly ApplicationDbContext _dbContext;
         private readonly AdminUserService _sut;
 
-        public AdminUserServiceBulkReactivateUsersAsyncTests()
+        public AdminUserServiceReactivateUserAsyncTests()
         {
             // Mock UserManager
             var userStore = new Mock<IUserStore<ApplicationUser>>();
@@ -67,48 +66,44 @@ namespace PoolMateBackend.Tests.UnitTests.Services.AdminUser
         }
 
         [Fact]
-        public async Task BulkReactivateUsersAsync_ShouldSkip_WhenUserNotFound()
+        public async Task ReactivateUserAsync_ShouldReturnError_WhenUserNotFound()
         {
             // Arrange
             _mockUserManager.Setup(x => x.FindByIdAsync(It.IsAny<string>()))
                 .ReturnsAsync((ApplicationUser?)null);
-            var request = new BulkReactivateUsersDto { UserIds = new List<string> { "user-1" } };
 
             // Act
-            var result = await _sut.BulkReactivateUsersAsync(request, CancellationToken.None);
+            var result = await _sut.ReactivateUserAsync("user-1", CancellationToken.None);
 
             // Assert
-            Assert.True(result.Success);
-            var data = result.Data as BulkReactivateResultDto;
-            Assert.Equal(0, data.SuccessCount);
-            Assert.Equal(1, data.FailedCount); // Or Skipped depending on implementation
+            Assert.False(result.Success);
+            Assert.Equal("User not found", result.Message);
         }
 
         [Fact]
-        public async Task BulkReactivateUsersAsync_ShouldSkip_WhenUserNotLocked()
+        public async Task ReactivateUserAsync_ShouldReturnError_WhenUserNotLocked()
         {
             // Arrange
             var user = new ApplicationUser { Id = "user-1" };
             _mockUserManager.Setup(x => x.FindByIdAsync(user.Id)).ReturnsAsync(user);
             _mockUserManager.Setup(x => x.IsLockedOutAsync(user)).ReturnsAsync(false);
-            var request = new BulkReactivateUsersDto { UserIds = new List<string> { user.Id } };
 
             // Act
-            var result = await _sut.BulkReactivateUsersAsync(request, CancellationToken.None);
+            var result = await _sut.ReactivateUserAsync(user.Id, CancellationToken.None);
 
             // Assert
-            Assert.True(result.Success);
-            var data = result.Data as BulkReactivateResultDto;
-            Assert.Equal(1, data.SkippedCount);
+            Assert.False(result.Success);
+            Assert.Equal("User is not currently deactivated", result.Message);
         }
 
         [Fact]
-        public async Task BulkReactivateUsersAsync_ShouldSuccess_WhenValidUser()
+        public async Task ReactivateUserAsync_ShouldSuccess_WhenValidUser()
         {
             // Arrange
-            var user = new ApplicationUser { Id = "user-1" };
+            var user = new ApplicationUser { Id = "user-1", UserName = "testuser" };
             _mockUserManager.Setup(x => x.FindByIdAsync(user.Id)).ReturnsAsync(user);
             _mockUserManager.Setup(x => x.IsLockedOutAsync(user)).ReturnsAsync(true);
+            _mockUserManager.Setup(x => x.GetRolesAsync(user)).ReturnsAsync(new[] { "User" });
             
             _mockUserManager.Setup(x => x.SetLockoutEndDateAsync(user, null))
                 .ReturnsAsync(IdentityResult.Success);
@@ -117,16 +112,20 @@ namespace PoolMateBackend.Tests.UnitTests.Services.AdminUser
             _mockUserManager.Setup(x => x.UpdateSecurityStampAsync(user))
                 .ReturnsAsync(IdentityResult.Success);
 
-            var request = new BulkReactivateUsersDto { UserIds = new List<string> { user.Id } };
+            _mockBannedUserCache.Setup(x => x.UnbanUserAsync(user.Id, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(true);
 
             // Act
-            var result = await _sut.BulkReactivateUsersAsync(request, CancellationToken.None);
+            var result = await _sut.ReactivateUserAsync(user.Id, CancellationToken.None);
 
             // Assert
             Assert.True(result.Success);
-            var data = result.Data as BulkReactivateResultDto;
-            Assert.Equal(1, data.SuccessCount);
             
+            // Verify DB calls
+            _mockUserManager.Verify(x => x.SetLockoutEndDateAsync(user, null), Times.Once);
+            _mockUserManager.Verify(x => x.ResetAccessFailedCountAsync(user), Times.Once);
+            _mockUserManager.Verify(x => x.UpdateSecurityStampAsync(user), Times.Once);
+
             // Verify Cache
             _mockBannedUserCache.Verify(x => x.UnbanUserAsync(user.Id, It.IsAny<CancellationToken>()), Times.Once);
         }
