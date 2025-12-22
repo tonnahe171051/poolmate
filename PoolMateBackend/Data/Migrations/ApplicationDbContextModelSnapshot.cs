@@ -341,6 +341,48 @@ namespace PoolMate.Api.Data.Migrations
                     b.ToTable("Matches");
                 });
 
+            modelBuilder.Entity("PoolMate.Api.Models.Organizer", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("FacebookPageUrl")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("OrganizationName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Email");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("Organizers");
+                });
+
             modelBuilder.Entity("PoolMate.Api.Models.PayoutTemplate", b =>
                 {
                     b.Property<int>("Id")
@@ -360,6 +402,10 @@ namespace PoolMate.Api.Data.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
                     b.Property<string>("PercentJson")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -368,6 +414,8 @@ namespace PoolMate.Api.Data.Migrations
                         .HasColumnType("int");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
 
                     b.HasIndex("MinPlayers", "MaxPlayers", "Places");
 
@@ -409,12 +457,20 @@ namespace PoolMate.Api.Data.Migrations
                     b.Property<int?>("SkillLevel")
                         .HasColumnType("int");
 
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
                     b.Property<string>("UserId")
                         .HasColumnType("nvarchar(450)");
 
                     b.HasKey("Id");
 
                     b.HasIndex("FullName");
+
+                    b.HasIndex("Slug")
+                        .IsUnique();
 
                     b.HasIndex("UserId");
 
@@ -536,6 +592,9 @@ namespace PoolMate.Api.Data.Migrations
                     b.Property<bool>("OnlineRegistrationEnabled")
                         .HasColumnType("bit");
 
+                    b.Property<int?>("OrganizerId")
+                        .HasColumnType("int");
+
                     b.Property<string>("OwnerUserId")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
@@ -579,6 +638,8 @@ namespace PoolMate.Api.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("IsPublic");
+
+                    b.HasIndex("OrganizerId");
 
                     b.HasIndex("OwnerUserId");
 
@@ -896,6 +957,28 @@ namespace PoolMate.Api.Data.Migrations
                     b.Navigation("WinnerTp");
                 });
 
+            modelBuilder.Entity("PoolMate.Api.Models.Organizer", b =>
+                {
+                    b.HasOne("PoolMate.Api.Models.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("PoolMate.Api.Models.PayoutTemplate", b =>
+                {
+                    b.HasOne("PoolMate.Api.Models.ApplicationUser", "OwnerUser")
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("OwnerUser");
+                });
+
             modelBuilder.Entity("PoolMate.Api.Models.Player", b =>
                 {
                     b.HasOne("PoolMate.Api.Models.ApplicationUser", "User")
@@ -919,6 +1002,10 @@ namespace PoolMate.Api.Data.Migrations
 
             modelBuilder.Entity("PoolMate.Api.Models.Tournament", b =>
                 {
+                    b.HasOne("PoolMate.Api.Models.Organizer", null)
+                        .WithMany("Tournaments")
+                        .HasForeignKey("OrganizerId");
+
                     b.HasOne("PoolMate.Api.Models.ApplicationUser", "OwnerUser")
                         .WithMany()
                         .HasForeignKey("OwnerUserId")
@@ -990,6 +1077,11 @@ namespace PoolMate.Api.Data.Migrations
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.Navigation("CreatedByUser");
+                });
+
+            modelBuilder.Entity("PoolMate.Api.Models.Organizer", b =>
+                {
+                    b.Navigation("Tournaments");
                 });
 
             modelBuilder.Entity("PoolMate.Api.Models.Player", b =>

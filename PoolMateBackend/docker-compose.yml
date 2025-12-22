@@ -1,0 +1,60 @@
+version: '3.8'
+
+name: poolmate
+
+services:
+  poolmate_backend:
+    # Sử dụng Dockerfile trong thư mục hiện tại để build image cho service 'poolmate_backend'
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Ánh xạ cổng host:container
+    ports:
+      - "7127:7127"
+    # Mount volume để reload code nhanh trong dev (tùy chọn, chỉ dùng cho dev)
+    # volumes:
+    #   - .:/app
+    # Environment variables (ví dụ: kết nối DB)
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_HTTP_PORTS=7127
+      - ConnectionStrings__ConnStr=Server=db;Database=PoolMateDB;User Id=sa;Password=SuperStrongPass123!@#;TrustServerCertificate=True;
+      - JWT__ValidIssuer=poolmate-auth
+      - JWT__ValidAudience=poolmate-api
+      - JWT__Secret=JWTAuthenticationHIGHsecuredPasswordVVVp1OH7Xzyr
+      - EmailSettings__SmtpServer=smtp.gmail.com
+      - EmailSettings__SmtpPort=587
+      - EmailSettings__SenderEmail=onlshop458@gmail.com
+      - EmailSettings__SenderPassword=hhzz czmv jzbn pgen
+      - AppSettings__FrontendUrl=https://poolmate-fe.vercel.app
+      - AppSettings__BackendUrl=https://poolmate-api.bigthing.vn
+      - Logging__LogLevel__Default=Information
+      - Logging__LogLevel__Microsoft.AspNetCore=Warning
+      - FargoRate__ApiBaseUrl=https://dashboard.fargorate.com/api
+      - FargoRate__TimeoutSeconds=30
+      - FargoRate__CacheDurationMinutes=1440
+      - FargoRate__MaxRetryAttempts=2
+      - Cloudinary__UploadPreset=poolmate_image
+      - Cloudinary__Folder=users/images
+      - Cloudinary__CloudName=dkf2q22po
+      - Cloudinary__ApiSecret=IzD9qx4t8OKCqt5WbH6n8BoFgV0
+      - Cloudinary__ApiKey=334153755786657
+      - AllowedHosts=*
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.poolmate.rule=Host(`poolmate-api.bigthing.vn`)"
+      - "traefik.http.services.poolmate.loadbalancer.server.port=7127"
+
+  db:
+    hostname: db
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    ports:
+      - "1433:1433"
+    environment:
+      SA_PASSWORD: "SuperStrongPass123!@#" # Đặt mật khẩu mạnh
+      ACCEPT_EULA: "Y"
+    volumes:
+      - sql_server_data:/var/opt/mssql
+
+volumes:
+  sql_server_data:

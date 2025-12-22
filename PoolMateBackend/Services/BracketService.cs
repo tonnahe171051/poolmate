@@ -1,14 +1,11 @@
-﻿using System;
+﻿﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using PoolMate.Api.Common;
 using PoolMate.Api.Data;
 using PoolMate.Api.Dtos.Tournament;
-using PoolMate.Api.Hubs;
 using PoolMate.Api.Models;
 
 namespace PoolMate.Api.Services
@@ -16,21 +13,28 @@ namespace PoolMate.Api.Services
     public class BracketService : IBracketService
     {
         private readonly ApplicationDbContext _db;
-        private readonly IMatchLockService _lockService;
-        private readonly IHubContext<TournamentHub> _hubContext;
-        private readonly ILogger<BracketService> _logger;
-        private readonly Random _rng = new();
+        private readonly IMatchService _matchService;
 
         public BracketService(
             ApplicationDbContext db,
-            IMatchLockService lockService,
-            IHubContext<TournamentHub> hubContext,
-            ILogger<BracketService> logger)
+            IMatchService matchService)
         {
             _db = db;
-            _lockService = lockService;
-            _hubContext = hubContext;
-            _logger = logger;
+            _matchService = matchService;
+        }
+
+        // Single validation helper (unified) — throws ValidationException for input validation
+        private void ValidatePlayerCountForCreate(Models.Tournament t, int count)
+        {
+            if (count < 2)
+                throw new ValidationException("At least two players are required to create a bracket.");
+
+            if (t.IsMultiStage && t.AdvanceToStage2Count.HasValue)
+            {
+                var requiredPlayers = Math.Max(t.AdvanceToStage2Count.Value + 1, 5);
+                if (count < requiredPlayers)
+                    throw new ValidationException($"Multi-stage bracket requires at least {requiredPlayers} players assigned in stage 1 for advance count {t.AdvanceToStage2Count.Value}.");
+            }
         }
 
         //Preview
@@ -63,45 +67,24 @@ namespace PoolMate.Api.Services
                     throw new InvalidOperationException($"Multi-stage bracket requires at least {requiredPlayers} players for advance count {t.AdvanceToStage2Count.Value}.");
             }
 
-            var optimalSize = GetOptimalBracketSize(players.Count);
-
-            var finalSize = optimalSize;
-            if (t.BracketSizeEstimate.HasValue && t.BracketSizeEstimate.Value >= optimalSize)
-            {
-                if (t.BracketSizeEstimate.Value <= optimalSize * 2)
-                    finalSize = t.BracketSizeEstimate.Value;
-            }
+            var finalSize = GetOptimalBracketSize(players.Count);
 
             var stage1Ordering = t.IsMultiStage ? t.Stage1Ordering : t.BracketOrdering;
 
             var stage1 = BuildStagePreview(
+                tournament: t,
                 stageNo: 1,
                 type: t.BracketType,
                 ordering: stage1Ordering,
                 size: finalSize,
-                players: players
+                players: players,
+                advanceCount: t.IsMultiStage ? t.AdvanceToStage2Count : null
             );
 
-            StagePreviewDto? stage2 = null;
-            if (t.IsMultiStage)
-            {
-                if (t.AdvanceToStage2Count is null || t.AdvanceToStage2Count <= 0)
-                    throw new InvalidOperationException("AdvanceToStage2Count must be set for multi-stage.");
-
-                if (t.AdvanceToStage2Count.Value < 4)
-                    throw new InvalidOperationException("AdvanceToStage2Count must be at least 4 for multi-stage tournaments.");
-
-                if ((t.AdvanceToStage2Count.Value & (t.AdvanceToStage2Count.Value - 1)) != 0)
-                    throw new InvalidOperationException("AdvanceToStage2Count must be a power of two (4,8,16,...).");
-
-                stage2 = BuildStagePreview(
-                    stageNo: 2,
-                    type: BracketType.SingleElimination,
-                    ordering: t.Stage2Ordering,
-                    size: t.AdvanceToStage2Count.Value,
-                    players: null
-                );
-            }
+            // Do not preview Stage 2 for multi-stage tournaments here — Stage 2
+            // is only created after Stage 1 completes and therefore cannot be
+            // meaningfully previewed before Stage 1 is persisted.
+            StageDto? stage2 = null;
 
             return new BracketPreviewDto
             {
@@ -110,6 +93,66 @@ namespace PoolMate.Api.Services
                 Stage1 = stage1,
                 Stage2 = stage2
             };
+        }
+
+        public async Task<StageDto> PreviewStageAsync(int tournamentId, int stageNo, CancellationToken ct)
+        {
+            if (stageNo <= 0) throw new InvalidOperationException("Invalid stage number.");
+
+            var tournament = await _db.Tournaments
+                .Include(t => t.Stages)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Id == tournamentId, ct)
+                ?? throw new KeyNotFoundException("Tournament not found");
+
+            if (!tournament.IsMultiStage)
+                throw new InvalidOperationException("Tournament is not multi-stage; no separate Stage 2 preview available.");
+
+            if (stageNo == 1)
+            {
+                // Delegate to existing preview logic for stage 1
+                var players = await _db.TournamentPlayers
+                    .Where(x => x.TournamentId == tournamentId)
+                    .Select(x => new PlayerSeed
+                    {
+                        TpId = x.Id,
+                        Name = x.DisplayName,
+                        Seed = x.Seed,
+                        Country = x.Country,
+                        FargoRating = x.SkillLevel
+                    })
+                    .ToListAsync(ct);
+
+                var finalSize = GetOptimalBracketSize(players.Count);
+
+                var ordering = tournament.IsMultiStage ? tournament.Stage1Ordering : tournament.BracketOrdering;
+                return BuildStagePreview(tournament, 1, tournament.BracketType, ordering, finalSize, players, tournament.IsMultiStage ? tournament.AdvanceToStage2Count : null);
+            }
+
+            // stageNo == 2
+            var stage1 = tournament.Stages.FirstOrDefault(s => s.StageNo == 1)
+                ?? throw new InvalidOperationException("Stage 1 not found for tournament.");
+
+            var stageEval = await EvaluateStageAsync(stage1.Id, ct);
+
+            if (!stage1.AdvanceCount.HasValue)
+                throw new InvalidOperationException("Stage 2 not configured for this tournament.");
+
+            var targetAdvance = stageEval.TargetAdvance ?? stage1.AdvanceCount.Value;
+            if (targetAdvance < 4)
+                throw new InvalidOperationException("Stage 2 requires at least four advancing players.");
+
+            if ((targetAdvance & (targetAdvance - 1)) != 0)
+                throw new InvalidOperationException("Stage 2 bracket size must be a power of two.");
+
+            var survivors = stageEval.SurvivorTpIds.Take(targetAdvance).ToList();
+            if (!survivors.Any())
+                throw new InvalidOperationException("No survivors available to preview Stage 2.");
+
+            var playerSeeds = await GetPlayerSeedsAsync(survivors, ct);
+
+            var ordering2 = tournament.Stage2Ordering;
+            return BuildStagePreview(tournament, 2, BracketType.SingleElimination, ordering2, targetAdvance, playerSeeds, null);
         }
 
         
@@ -123,92 +166,67 @@ namespace PoolMate.Api.Services
                     .FirstOrDefaultAsync(x => x.Id == tournamentId, ct)
                     ?? throw new KeyNotFoundException("Tournament not found");
 
+                // Defensive validation: multi-stage tournaments must not use Single Elimination for Stage 1
+                if (t.IsMultiStage && t.BracketType == BracketType.SingleElimination)
+                    throw new InvalidOperationException("Tournament configured as multi-stage cannot use Single Elimination for Stage 1.");
+
                 var anyMatches = await _db.Matches.AnyAsync(m => m.TournamentId == tournamentId, ct);
                 if (anyMatches) throw new InvalidOperationException("Bracket already created.");
 
-                List<PlayerSeed?> slots;
-
                 var stage1Ordering = t.IsMultiStage ? t.Stage1Ordering : t.BracketOrdering;
 
+                var tournamentPlayers = await _db.TournamentPlayers
+                    .Where(x => x.TournamentId == tournamentId)
+                    .Select(x => new PlayerSeed
+                    {
+                        TpId = x.Id,
+                        Name = x.DisplayName,
+                        Seed = x.Seed,
+                        Country = x.Country,
+                        FargoRating = x.SkillLevel
+                    })
+                    .ToListAsync(ct);
+
+                ValidatePlayerCountForCreate(t, tournamentPlayers.Count);
+
+                List<PlayerSeed?> slots;
 
                 if (request?.Type == BracketCreationType.Manual && request.ManualAssignments != null)
                 {
-                    // Manual bracket creation
                     await ValidateManualAssignments(tournamentId, request.ManualAssignments, ct);
                     slots = await ConvertAssignmentsToSlots(tournamentId, request.ManualAssignments, ct);
                 }
                 else
                 {
-                    // Automatic bracket creation (existing logic)
-                    var players = await _db.TournamentPlayers
-                        .Where(x => x.TournamentId == tournamentId)
-                        .Select(x => new PlayerSeed { TpId = x.Id, Name = x.DisplayName, Seed = x.Seed })
-                        .ToListAsync(ct);
+                    var finalSize = GetOptimalBracketSize(tournamentPlayers.Count);
 
-                    if (players.Count < 2)
-                        throw new InvalidOperationException("At least two players are required to create a bracket.");
+                    if (finalSize < tournamentPlayers.Count)
+                        throw new InvalidOperationException($"Bracket size {finalSize} is smaller than the number of registered players ({tournamentPlayers.Count}).");
 
-                    if (t.IsMultiStage && t.AdvanceToStage2Count.HasValue)
-                    {
-                        var requiredPlayers = Math.Max(t.AdvanceToStage2Count.Value + 1, 5);
-                        if (players.Count < requiredPlayers)
-                            throw new InvalidOperationException($"Multi-stage bracket requires at least {requiredPlayers} players for advance count {t.AdvanceToStage2Count.Value}.");
-                    }
-
-                    var optimalSize = GetOptimalBracketSize(players.Count);
-                    var finalSize = optimalSize;
-                    if (t.BracketSizeEstimate.HasValue && t.BracketSizeEstimate.Value >= optimalSize)
-                    {
-                        if (t.BracketSizeEstimate.Value <= optimalSize * 2)
-                            finalSize = t.BracketSizeEstimate.Value;
-                    }
-
-                    slots = MakeSlots(players, finalSize, stage1Ordering);
+                    slots = MakeSlots(tournamentPlayers, finalSize, stage1Ordering);
                 }
 
-                // After slots are prepared (manual or automatic), validate and possibly
-                // shrink the bracket to the optimal size based on the number of assigned players.
-                var assignedCount = slots.Count(s => s is not null && s.TpId != default);
+                if (slots.Count < tournamentPlayers.Count)
+                    throw new InvalidOperationException($"Bracket size ({slots.Count}) cannot be smaller than the number of registered players ({tournamentPlayers.Count}).");
 
-                if (assignedCount < 2)
-                    throw new PoolMate.Api.Common.ValidationException("At least two players are required to create a bracket.");
+                var assignedIds = slots
+                    .Where(s => s is not null && s.TpId != default)
+                    .Select(s => s!.TpId)
+                    .ToList();
 
-                // If this is a multi-stage tournament, manual creations must still satisfy
-                // the configured minimum advance count based on assigned players.
-                if (t.IsMultiStage && t.AdvanceToStage2Count.HasValue)
-                {
-                    var requiredPlayers = Math.Max(t.AdvanceToStage2Count.Value + 1, 5);
-                    if (assignedCount < requiredPlayers)
-                        throw new PoolMate.Api.Common.ValidationException($"Multi-stage bracket requires at least {requiredPlayers} players assigned in stage 1 for advance count {t.AdvanceToStage2Count.Value}.");
-                }
+                if (assignedIds.Count != tournamentPlayers.Count)
+                    throw new InvalidOperationException($"All {tournamentPlayers.Count} registered players must be assigned to the bracket before creation. Currently assigned {assignedIds.Count}.");
 
-                // Compute optimal bracket size from the number of players actually assigned
-                // and shrink if necessary (e.g., user left many slots empty in manual assignment).
-                var optimalForAssigned = GetOptimalBracketSize(Math.Max(assignedCount, 2));
-                if (optimalForAssigned < slots.Count)
-                {
-                    // Rebuild slots for the smaller optimal size using only the assigned players
-                    var presentPlayers = slots.Where(s => s is not null).Select(s => s!).ToList();
-                    slots = MakeSlots(presentPlayers, optimalForAssigned, stage1Ordering);
-                }
+                if (assignedIds.Distinct().Count() != tournamentPlayers.Count)
+                    throw new InvalidOperationException("Each player must appear exactly once in the bracket.");
 
-                // Finally, reject creation if any first-round match is completely empty
-                // (both slots null). This enforces a "clean" bracket for manual creations.
                 for (int i = 0; i < slots.Count / 2; i++)
                 {
                     if (slots[2 * i] is null && slots[2 * i + 1] is null)
                     {
-                        var err = "Bracket contains an empty first-round match. Please correct the bracket before creating.";
+                        var err = "Bracket contains an empty first-round match. Please adjust slot assignments (null-null pair not allowed).";
                         throw new PoolMate.Api.Common.ValidationException(err, new[] { err });
                     }
-                }
-
-                if (t.IsMultiStage && t.AdvanceToStage2Count.HasValue)
-                {
-                    var requiredPlayers = Math.Max(t.AdvanceToStage2Count.Value + 1, 5);
-                    var assignedPlayers = slots.Count(s => s is not null && s.TpId != default);
-                    if (assignedPlayers < requiredPlayers)
-                        throw new InvalidOperationException($"Multi-stage bracket requires at least {requiredPlayers} players assigned in stage 1 for advance count {t.AdvanceToStage2Count.Value}.");
                 }
 
                 // Create Stage 1
@@ -231,7 +249,7 @@ namespace PoolMate.Api.Services
                     slots: slots,
                     ct: ct);
 
-                await ProcessAutoAdvancements(t.Id, ct);
+                await _matchService.ProcessAutoAdvancementsAsync(t.Id, ct);
             }
             catch (Exception ex)
             {
@@ -242,7 +260,7 @@ namespace PoolMate.Api.Services
 
         public async Task<BracketDto> GetAsync(int tournamentId, CancellationToken ct)
         {
-            await ProcessAutoAdvancements(tournamentId, ct);
+            await _matchService.ProcessAutoAdvancementsAsync(tournamentId, ct);
 
             var tournament = await _db.Tournaments
                 .Include(x => x.Stages)
@@ -271,52 +289,7 @@ namespace PoolMate.Api.Services
             foreach (var stage in tournament.Stages.OrderBy(s => s.StageNo))
             {
                 var stageMatches = matches.Where(m => m.StageId == stage.Id).ToList();
-                var stageEval = EvaluateStageState(tournament, stage, stageMatches);
-
-                var stageDto = new StageDto
-                {
-                    StageNo = stage.StageNo,
-                    Type = stage.Type,
-                    Ordering = stage.Ordering,
-                    BracketSize = stageEval.ActualBracketSize,
-                    Status = stage.Status,
-                    CompletedAt = stage.CompletedAt,
-                    AdvanceCount = stage.AdvanceCount,
-                    CanComplete = stageEval.CanComplete
-                };
-
-                // Group by BracketSide
-                var bracketGroups = stageMatches.GroupBy(m => m.Bracket);
-
-                foreach (var bracketGroup in bracketGroups.OrderBy(g => g.Key))
-                {
-                    var bracketDto = new BracketSideDto
-                    {
-                        BracketSide = bracketGroup.Key
-                    };
-
-                    // Group by RoundNo
-                    var roundGroups = bracketGroup.GroupBy(m => m.RoundNo).OrderBy(g => g.Key);
-
-                    foreach (var roundGroup in roundGroups)
-                    {
-                        var roundDto = new RoundDto
-                        {
-                            RoundNo = roundGroup.Key
-                        };
-
-                        foreach (var match in roundGroup.OrderBy(m => m.PositionInRound))
-                        {
-                            roundDto.Matches.Add(MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable));
-                        }
-
-                        bracketDto.Rounds.Add(roundDto);
-                    }
-
-                    stageDto.Brackets.Add(bracketDto);
-                }
-
-                stages.Add(stageDto);
+                stages.Add(BuildStageDto(tournament, stage, stageMatches));
             }
 
             return new BracketDto
@@ -325,6 +298,59 @@ namespace PoolMate.Api.Services
                 IsMultiStage = tournament.IsMultiStage,
                 Stages = stages
             };
+        }
+
+        private StageDto BuildStageDto(Tournament tournament, TournamentStage stage, List<Match> stageMatches)
+        {
+            var stageEval = EvaluateStageState(tournament, stage, stageMatches);
+
+            var stageDto = new StageDto
+            {
+                StageNo = stage.StageNo,
+                Type = stage.Type,
+                Ordering = stage.Ordering,
+                BracketSize = stageEval.ActualBracketSize,
+                Status = stage.Status,
+                CompletedAt = stage.CompletedAt,
+                AdvanceCount = stage.AdvanceCount,
+                CanComplete = stageEval.CanComplete
+            };
+
+            var matchLookup = stageMatches.ToDictionary(m => m.Id, m => m);
+
+            var bracketGroups = stageMatches.GroupBy(m => m.Bracket);
+
+            foreach (var bracketGroup in bracketGroups.OrderBy(g => g.Key))
+            {
+                var bracketDto = new BracketSideDto
+                {
+                    BracketSide = bracketGroup.Key
+                };
+
+                var roundGroups = bracketGroup.GroupBy(m => m.RoundNo).OrderBy(g => g.Key);
+
+                foreach (var roundGroup in roundGroups)
+                {
+                    var roundDto = new RoundDto
+                    {
+                        RoundNo = roundGroup.Key
+                    };
+
+                    foreach (var match in roundGroup.OrderBy(m => m.PositionInRound))
+                    {
+                        var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
+                        dto.ProjectedPlayer1 = ResolveProjectedPlayerDescription(match, 1, matchLookup, new HashSet<int>());
+                        dto.ProjectedPlayer2 = ResolveProjectedPlayerDescription(match, 2, matchLookup, new HashSet<int>());
+                        roundDto.Matches.Add(dto);
+                    }
+
+                    bracketDto.Rounds.Add(roundDto);
+                }
+
+                stageDto.Brackets.Add(bracketDto);
+            }
+
+            return stageDto;
         }
 
         public async Task<BracketDto> GetFilteredAsync(int tournamentId, BracketFilterRequest filter, CancellationToken ct)
@@ -336,11 +362,68 @@ namespace PoolMate.Api.Services
             return ApplyBracketFilter(fullBracket, filter);
         }
 
-        public async Task<MatchDto> GetMatchAsync(int matchId, CancellationToken ct)
+        // Return only the winners-side (or knockout) brackets for each stage
+        public async Task<BracketDto> GetWinnersSideAsync(int tournamentId, CancellationToken ct)
         {
-            var match = await LoadMatchForScoringAsync(matchId, ct);
-            var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            return MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
+            var full = await GetAsync(tournamentId, ct);
+            var res = new BracketDto
+            {
+                TournamentId = full.TournamentId,
+                IsMultiStage = full.IsMultiStage,
+                Stages = new List<StageDto>()
+            };
+
+            foreach (var s in full.Stages)
+            {
+                var stage = new StageDto
+                {
+                    StageNo = s.StageNo,
+                    Type = s.Type,
+                    Ordering = s.Ordering,
+                    BracketSize = s.BracketSize,
+                    Status = s.Status,
+                    CompletedAt = s.CompletedAt,
+                    AdvanceCount = s.AdvanceCount,
+                    CanComplete = s.CanComplete,
+                    Brackets = s.Brackets.Where(b => b.BracketSide == BracketSide.Winners || b.BracketSide == BracketSide.Knockout).ToList()
+                };
+
+                if (stage.Brackets.Any()) res.Stages.Add(stage);
+            }
+
+            return res;
+        }
+
+        // Return only the losers-side brackets for each stage
+        public async Task<BracketDto> GetLosersSideAsync(int tournamentId, CancellationToken ct)
+        {
+            var full = await GetAsync(tournamentId, ct);
+            var res = new BracketDto
+            {
+                TournamentId = full.TournamentId,
+                IsMultiStage = full.IsMultiStage,
+                Stages = new List<StageDto>()
+            };
+
+            foreach (var s in full.Stages)
+            {
+                var stage = new StageDto
+                {
+                    StageNo = s.StageNo,
+                    Type = s.Type,
+                    Ordering = s.Ordering,
+                    BracketSize = s.BracketSize,
+                    Status = s.Status,
+                    CompletedAt = s.CompletedAt,
+                    AdvanceCount = s.AdvanceCount,
+                    CanComplete = s.CanComplete,
+                    Brackets = s.Brackets.Where(b => b.BracketSide == BracketSide.Losers).ToList()
+                };
+
+                if (stage.Brackets.Any()) res.Stages.Add(stage);
+            }
+
+            return res;
         }
 
         private BracketDto ApplyBracketFilter(BracketDto bracket, BracketFilterRequest filter)
@@ -446,6 +529,34 @@ namespace PoolMate.Api.Services
                 scheduledDisplay = match.ScheduledUtc.Value.ToString("MMM dd, HH:mm\\h");
             }
 
+            // build PlayerDto instances once so we can reuse them for projected labels
+            PlayerDto? p1 = match.Player1Tp != null ? new PlayerDto
+            {
+                TpId = match.Player1Tp.Id,
+                Name = match.Player1Tp.DisplayName,
+                Seed = match.Player1Tp.Seed,
+                Country = match.Player1Tp.Country,
+                FargoRating = match.Player1Tp.SkillLevel
+            } : null;
+
+            PlayerDto? p2 = match.Player2Tp != null ? new PlayerDto
+            {
+                TpId = match.Player2Tp.Id,
+                Name = match.Player2Tp.DisplayName,
+                Seed = match.Player2Tp.Seed,
+                Country = match.Player2Tp.Country,
+                FargoRating = match.Player2Tp.SkillLevel
+            } : null;
+
+            PlayerDto? winner = match.WinnerTp != null ? new PlayerDto
+            {
+                TpId = match.WinnerTp.Id,
+                Name = match.WinnerTp.DisplayName,
+                Seed = match.WinnerTp.Seed,
+                Country = match.WinnerTp.Country,
+                FargoRating = match.WinnerTp.SkillLevel
+            } : null;
+
             return new MatchDto
             {
                 Id = match.Id,
@@ -455,35 +566,18 @@ namespace PoolMate.Api.Services
                 Status = match.Status,
 
                 // ✅ Enhanced player data with country
-                Player1 = match.Player1Tp != null ? new PlayerDto
-                {
-                    TpId = match.Player1Tp.Id,
-                    Name = match.Player1Tp.DisplayName,
-                    Seed = match.Player1Tp.Seed,
-                    Country = match.Player1Tp.Country,
-                    FargoRating = match.Player1Tp.SkillLevel
-                } : null,
-                Player2 = match.Player2Tp != null ? new PlayerDto
-                {
-                    TpId = match.Player2Tp.Id,
-                    Name = match.Player2Tp.DisplayName,
-                    Seed = match.Player2Tp.Seed,
-                    Country = match.Player2Tp.Country,
-                    FargoRating = match.Player2Tp.SkillLevel
-                } : null,
-                Winner = match.WinnerTp != null ? new PlayerDto
-                {
-                    TpId = match.WinnerTp.Id,
-                    Name = match.WinnerTp.DisplayName,
-                    Seed = match.WinnerTp.Seed,
-                    Country = match.WinnerTp.Country,
-                    FargoRating = match.WinnerTp.SkillLevel
-                } : null,
+                Player1 = p1,
+                Player2 = p2,
+                Winner = winner,
 
                 Player1SourceType = match.Player1SourceType,
                 Player1SourceMatchId = match.Player1SourceMatchId,
                 Player2SourceType = match.Player2SourceType,
                 Player2SourceMatchId = match.Player2SourceMatchId,
+
+                // UI-friendly projected labels for empty/TBD slots
+                ProjectedPlayer1 = FormatSlotLabel(p1, match.Player1SourceType, match.Player1SourceMatchId),
+                ProjectedPlayer2 = FormatSlotLabel(p2, match.Player2SourceType, match.Player2SourceMatchId),
 
                 ScheduledUtc = match.ScheduledUtc,
                 ScheduledDisplay = scheduledDisplay,
@@ -505,223 +599,6 @@ namespace PoolMate.Api.Services
             };
         }
 
-        private async Task ProcessAutoAdvancements(int tournamentId, CancellationToken ct)
-        {
-            var matches = await _db.Matches
-                .Where(m => m.TournamentId == tournamentId)
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .ToListAsync(ct);
-
-            if (!matches.Any())
-                return;
-
-            var matchDict = matches.ToDictionary(m => m.Id, m => m);
-            var queue = new Queue<Match>(matches.Where(m => m.Status == MatchStatus.NotStarted));
-            var changed = false;
-
-            while (queue.Count > 0)
-            {
-                var match = queue.Dequeue();
-
-                if (TryCompleteMatchByBye(match, matchDict))
-                {
-                    changed = true;
-
-                    if (match.NextWinnerMatchId.HasValue &&
-                        matchDict.TryGetValue(match.NextWinnerMatchId.Value, out var nextWinnerMatch))
-                    {
-                        queue.Enqueue(nextWinnerMatch);
-                    }
-
-                    if (match.NextLoserMatchId.HasValue &&
-                        matchDict.TryGetValue(match.NextLoserMatchId.Value, out var nextLoserMatch))
-                    {
-                        queue.Enqueue(nextLoserMatch);
-                    }
-                }
-            }
-
-            if (changed)
-                await _db.SaveChangesAsync(ct);
-        }
-
-        public async Task<MatchDto> UpdateMatchAsync(int matchId, UpdateMatchRequest request, CancellationToken ct)
-        {
-            if (request is null)
-                throw new ArgumentNullException(nameof(request));
-
-            var match = await LoadMatchAggregateAsync(matchId, ct);
-
-            if (match.Stage.Status == StageStatus.Completed)
-                throw new InvalidOperationException("Stage has been completed and cannot be modified.");
-
-            if (match.Status == MatchStatus.Completed)
-                throw new InvalidOperationException("Match already completed. Use correct-result workflow.");
-
-            ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
-
-            if (request.RaceTo.HasValue)
-            {
-                if (request.RaceTo.Value <= 0)
-                    throw new InvalidOperationException("Race-to value must be positive.");
-                match.RaceTo = request.RaceTo;
-            }
-
-            if (request.ScheduledUtc.HasValue)
-                match.ScheduledUtc = request.ScheduledUtc;
-
-            var previousStatus = match.Status;
-            var previousTableId = match.TableId;
-
-            if (request.TableId.HasValue)
-            {
-                if (match.TableId != request.TableId.Value)
-                {
-                    var table = await ValidateTableSelectionAsync(match, request.TableId.Value, ct);
-                    match.TableId = table.Id;
-                    match.Table = table;
-                }
-            }
-            else if (match.TableId.HasValue)
-            {
-                match.TableId = null;
-                match.Table = null;
-            }
-
-            match.ScoreP1 = request.ScoreP1;
-            match.ScoreP2 = request.ScoreP2;
-
-            int? winnerTpId = request.WinnerTpId;
-            if (winnerTpId.HasValue)
-            {
-                EnsureWinnerBelongsToMatch(match, winnerTpId.Value);
-            }
-            else
-            {
-                winnerTpId = InferWinnerFromScores(match);
-            }
-
-            if (winnerTpId.HasValue && (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue))
-                throw new InvalidOperationException("Both players must be assigned before recording a winner.");
-
-            var hasProgress = HasProgress(match.ScoreP1, match.ScoreP2, match.TableId);
-
-            if ((winnerTpId.HasValue || hasProgress) &&
-                match.Player1TpId.HasValue &&
-                match.Player2TpId.HasValue &&
-                match.Player1TpId == match.Player2TpId)
-            {
-                throw new InvalidOperationException("Cannot progress match because the same player occupies both slots.");
-            }
-
-            match.WinnerTpId = winnerTpId;
-            match.WinnerTp = winnerTpId switch
-            {
-                not null and var id when id == match.Player1TpId => match.Player1Tp,
-                not null and var id when id == match.Player2TpId => match.Player2Tp,
-                _ => null
-            };
-
-            if (winnerTpId.HasValue)
-            {
-                match.Status = MatchStatus.Completed;
-            }
-            else if (hasProgress)
-            {
-                match.Status = MatchStatus.InProgress;
-            }
-            else
-            {
-                match.Status = MatchStatus.NotStarted;
-            }
-
-            await UpdateTableUsageAsync(match, previousTableId, previousStatus, ct);
-
-            Dictionary<int, Match>? matchDict = null;
-            if (match.Status == MatchStatus.Completed)
-            {
-                matchDict = await LoadTournamentMatchesDictionaryAsync(match.TournamentId, ct);
-                PropagateResult(match, matchDict);
-            }
-
-            await _db.SaveChangesAsync(ct);
-
-            if (matchDict is not null)
-                await ProcessAutoAdvancements(match.TournamentId, ct);
-
-            var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-
-            // Broadcast realtime updates
-            // bracketChanged = true if match completed OR table assignment changed
-            var tableAssignmentChanged = previousTableId != match.TableId;
-            await PublishRealtimeUpdates(match, dto, bracketChanged: match.Status == MatchStatus.Completed || tableAssignmentChanged, ct);
-
-            return dto;
-        }
-
-        public async Task<MatchDto> CorrectMatchResultAsync(int matchId, CorrectMatchResultRequest request, CancellationToken ct)
-        {
-            if (request is null)
-                throw new ArgumentNullException(nameof(request));
-
-            var match = await LoadMatchAggregateAsync(matchId, ct);
-
-            if (match.Stage.Status == StageStatus.Completed)
-                throw new InvalidOperationException("Stage has been completed and cannot be modified.");
-
-            if (match.WinnerTpId is null)
-                throw new InvalidOperationException("Match has no recorded result to correct.");
-
-            EnsureWinnerBelongsToMatch(match, request.WinnerTpId);
-            ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
-
-            if (request.RaceTo.HasValue)
-            {
-                if (request.RaceTo.Value <= 0)
-                    throw new InvalidOperationException("Race-to value must be positive.");
-                match.RaceTo = request.RaceTo;
-            }
-
-            var previousStatus = match.Status;
-            var previousTableId = match.TableId;
-
-            var matchDict = await LoadTournamentMatchesDictionaryAsync(match.TournamentId, ct);
-            var dependencyMap = BuildDependencyMap(matchDict);
-
-            var processed = new HashSet<int>();
-            var tableSnapshot = new Dictionary<int, (int? TableId, MatchStatus PreviousStatus)>();
-
-            RewindCascade(match.Id, dependencyMap, processed, tableSnapshot);
-
-            match.ScoreP1 = request.ScoreP1;
-            match.ScoreP2 = request.ScoreP2;
-            match.WinnerTpId = request.WinnerTpId;
-            match.WinnerTp = request.WinnerTpId == match.Player1TpId ? match.Player1Tp :
-                              request.WinnerTpId == match.Player2TpId ? match.Player2Tp : null;
-            match.Status = MatchStatus.Completed;
-
-            foreach (var entry in tableSnapshot)
-            {
-                await UpdateTableUsageAsync(matchDict[entry.Key], entry.Value.TableId, entry.Value.PreviousStatus, ct);
-            }
-
-            await UpdateTableUsageAsync(match, previousTableId, previousStatus, ct);
-
-            PropagateResult(match, matchDict);
-
-            await _db.SaveChangesAsync(ct);
-            await ProcessAutoAdvancements(match.TournamentId, ct);
-
-            var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-
-            // Broadcast realtime updates
-            await PublishRealtimeUpdates(match, dto, bracketChanged: true, ct);
-
-            return dto;
-        }
 
         public async Task<StageCompletionResultDto> CompleteStageAsync(int tournamentId, int stageNo, CompleteStageRequest request, CancellationToken ct)
         {
@@ -732,6 +609,12 @@ namespace PoolMate.Api.Services
 
             var stage = tournament.Stages.FirstOrDefault(s => s.StageNo == stageNo)
                 ?? throw new InvalidOperationException("Stage not found.");
+
+            if (!tournament.IsStarted || tournament.Status == TournamentStatus.Upcoming)
+                throw new InvalidOperationException("Tournament must be started before completing a stage.");
+
+            if (tournament.Status == TournamentStatus.Completed)
+                throw new InvalidOperationException("Tournament has already been completed.");
 
             if (stage.Status == StageStatus.Completed)
                 throw new InvalidOperationException("Stage already completed.");
@@ -857,7 +740,7 @@ namespace PoolMate.Api.Services
 
             if (createdStage2)
             {
-                await ProcessAutoAdvancements(tournament.Id, ct);
+                await _matchService.ProcessAutoAdvancementsAsync(tournament.Id, ct);
             }
 
             return new StageCompletionResultDto
@@ -873,7 +756,7 @@ namespace PoolMate.Api.Services
 
         public async Task<TournamentStatusSummaryDto> GetTournamentStatusAsync(int tournamentId, CancellationToken ct)
         {
-            await ProcessAutoAdvancements(tournamentId, ct);
+            await _matchService.ProcessAutoAdvancementsAsync(tournamentId, ct);
 
             var tournament = await _db.Tournaments
                 .Include(t => t.Tables)
@@ -964,159 +847,6 @@ namespace PoolMate.Api.Services
             return summary;
         }
 
-        public async Task<MatchScoreUpdateResponse> UpdateLiveScoreAsync(int matchId, UpdateLiveScoreRequest request, ScoringContext actor, CancellationToken ct)
-        {
-            if (request is null)
-                throw new ArgumentNullException(nameof(request));
-            if (actor is null)
-                throw new ArgumentNullException(nameof(actor));
-
-            var lockResult = _lockService.AcquireOrRefresh(matchId, actor.ActorId, request.LockId);
-            if (!lockResult.Granted)
-                throw new MatchLockedException(lockResult.LockId, lockResult.ExpiresAt);
-
-            try
-            {
-                var match = await LoadMatchForScoringAsync(matchId, ct);
-                ValidateScoringAccess(match, actor, ensureNotCompleted: true);
-                ApplyRowVersion(match, request.RowVersion);
-                ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
-
-                var intendsToUpdateScoresOrRace = request.ScoreP1.HasValue || request.ScoreP2.HasValue || request.RaceTo.HasValue;
-                if (intendsToUpdateScoresOrRace && (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue))
-                    throw new InvalidOperationException("Both players must be assigned before updating scores or race-to.");
-
-                if (request.RaceTo.HasValue)
-                    match.RaceTo = request.RaceTo;
-
-                var previousStatus = match.Status;
-                var previousTableId = match.TableId;
-
-                if (request.ScoreP1.HasValue)
-                    match.ScoreP1 = request.ScoreP1;
-                if (request.ScoreP2.HasValue)
-                    match.ScoreP2 = request.ScoreP2;
-
-                if (!HasProgress(match.ScoreP1, match.ScoreP2, match.TableId))
-                {
-                    match.Status = MatchStatus.NotStarted;
-                    match.WinnerTpId = null;
-                    match.WinnerTp = null;
-                }
-                else if (match.Status != MatchStatus.Completed)
-                {
-                    match.Status = MatchStatus.InProgress;
-                    match.WinnerTpId = null;
-                    match.WinnerTp = null;
-                }
-
-                await UpdateTableUsageAsync(match, previousTableId, previousStatus, ct);
-                await SaveChangesWithConcurrencyAsync(match, ct);
-
-                var stageEval = await EvaluateStageAsync(match.StageId, ct);
-                var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-
-                // Broadcast bracket update on score changes to keep bracket view in sync
-                await PublishRealtimeUpdates(match, dto, bracketChanged: true, ct);
-
-                return new MatchScoreUpdateResponse
-                {
-                    Match = dto,
-                    LockId = lockResult.LockId,
-                    LockExpiresAt = lockResult.ExpiresAt,
-                    IsCompleted = match.Status == MatchStatus.Completed
-                };
-            }
-            catch (ConcurrencyConflictException)
-            {
-                _lockService.Release(matchId, lockResult.LockId, actor.ActorId);
-                throw;
-            }
-            catch
-            {
-                _lockService.Release(matchId, lockResult.LockId, actor.ActorId);
-                throw;
-            }
-        }
-
-        public async Task<MatchScoreUpdateResponse> CompleteMatchAsync(int matchId, CompleteMatchRequest request, ScoringContext actor, CancellationToken ct)
-        {
-            if (request is null)
-                throw new ArgumentNullException(nameof(request));
-            if (actor is null)
-                throw new ArgumentNullException(nameof(actor));
-
-            var lockResult = _lockService.AcquireOrRefresh(matchId, actor.ActorId, request.LockId);
-            if (!lockResult.Granted)
-                throw new MatchLockedException(lockResult.LockId, lockResult.ExpiresAt);
-
-            try
-            {
-                var match = await LoadMatchForScoringAsync(matchId, ct);
-                ValidateScoringAccess(match, actor, ensureNotCompleted: false);
-
-                ApplyRowVersion(match, request.RowVersion);
-                ValidateScoreInput(match, request.ScoreP1, request.ScoreP2, request.RaceTo);
-
-                if (request.ScoreP1.HasValue)
-                    match.ScoreP1 = request.ScoreP1;
-                if (request.ScoreP2.HasValue)
-                    match.ScoreP2 = request.ScoreP2;
-                if (request.RaceTo.HasValue)
-                    match.RaceTo = request.RaceTo;
-
-                if (!match.Player1TpId.HasValue || !match.Player2TpId.HasValue)
-                    throw new InvalidOperationException("Both players must be assigned before completing the match.");
-
-                var raceTo = match.RaceTo ?? throw new InvalidOperationException("Race-to value must be set before completing the match.");
-
-                if (!match.ScoreP1.HasValue || !match.ScoreP2.HasValue)
-                    throw new InvalidOperationException("Both scores must be provided before completing the match.");
-
-                var winnerTpId = DetermineWinnerFromScores(
-                    match.ScoreP1.Value,
-                    match.ScoreP2.Value,
-                    match.Player1TpId.Value,
-                    match.Player2TpId.Value,
-                    raceTo);
-
-                var previousStatus = match.Status;
-                var previousTableId = match.TableId;
-
-                match.WinnerTpId = winnerTpId;
-                match.WinnerTp = winnerTpId == match.Player1TpId ? match.Player1Tp : match.Player2Tp;
-                match.Status = MatchStatus.Completed;
-
-                await UpdateTableUsageAsync(match, previousTableId, previousStatus, ct);
-
-                var matchDict = await LoadTournamentMatchesDictionaryAsync(match.TournamentId, ct);
-                PropagateResult(match, matchDict);
-
-                await SaveChangesWithConcurrencyAsync(match, ct);
-                await ProcessAutoAdvancements(match.TournamentId, ct);
-
-                var stageEval = await EvaluateStageAsync(match.StageId, ct);
-                var dto = MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-
-                await PublishRealtimeUpdates(match, dto, bracketChanged: true, ct);
-
-                return new MatchScoreUpdateResponse
-                {
-                    Match = dto,
-                    LockId = lockResult.LockId,
-                    LockExpiresAt = lockResult.ExpiresAt,
-                    IsCompleted = true
-                };
-            }
-            catch (ConcurrencyConflictException)
-            {
-                throw;
-            }
-            finally
-            {
-                _lockService.Release(matchId, lockResult.LockId, actor.ActorId);
-            }
-        }
 
         public async Task ResetAsync(int tournamentId, CancellationToken ct)
         {
@@ -1146,16 +876,38 @@ namespace PoolMate.Api.Services
             await _db.SaveChangesAsync(ct);
         }
 
+        private sealed record MatchStatsData(
+            int Id,
+            int RoundNo,
+            int StageNo,
+            BracketSide Bracket,
+            int? Player1TpId,
+            int? Player2TpId,
+            int? WinnerTpId,
+            int? ScoreP1,
+            int? ScoreP2,
+            MatchStatus Status,
+            int? NextWinnerMatchId,
+            int? NextLoserMatchId);
+
         public async Task<IReadOnlyList<TournamentPlayerStatsDto>> GetPlayerStatsAsync(int tournamentId, CancellationToken ct)
         {
+            var tournament = await _db.Tournaments
+                .Include(t => t.Stages)
+                .Where(t => t.Id == tournamentId)
+                .FirstOrDefaultAsync(ct)
+                ?? throw new KeyNotFoundException("Tournament not found.");
+
+            var tournamentState = new
+            {
+                tournament.IsStarted,
+                tournament.IsMultiStage,
+                IsCompleted = tournament.Stages.Any() && tournament.Stages.Max(s => s.StageNo) == tournament.Stages.Count(s => s.Status == StageStatus.Completed)
+            };
+
             var players = await _db.TournamentPlayers
                 .Where(tp => tp.TournamentId == tournamentId)
-                .Select(tp => new
-                {
-                    tp.Id,
-                    tp.DisplayName,
-                    tp.Seed
-                })
+                .Select(tp => new { tp.Id, tp.DisplayName, tp.Seed })
                 .ToListAsync(ct);
 
             if (players.Count == 0)
@@ -1174,16 +926,15 @@ namespace PoolMate.Api.Services
                     RacksWon = 0,
                     RacksLost = 0,
                     LastStageNo = null,
-                    IsEliminated = true
+                    IsEliminated = false
                 });
 
             var matches = await _db.Matches
                 .Where(m => m.TournamentId == tournamentId)
-                .Select(m => new
-                {
+                .Select(m => new MatchStatsData(
                     m.Id,
                     m.RoundNo,
-                    StageNo = m.Stage.StageNo,
+                    m.Stage.StageNo,
                     m.Bracket,
                     m.Player1TpId,
                     m.Player2TpId,
@@ -1193,11 +944,46 @@ namespace PoolMate.Api.Services
                     m.Status,
                     m.NextWinnerMatchId,
                     m.NextLoserMatchId
-                })
+                ))
                 .ToListAsync(ct);
 
             var activePlayers = new HashSet<int>();
+            var maxStageNo = matches.Any() ? matches.Max(m => m.StageNo) : 0;
 
+            // Populate stats from matches
+            PopulatePlayerStats(matches, stats, activePlayers);
+
+            // Determine champions
+            var championIds = DetermineChampions(matches, maxStageNo);
+
+            // Apply placements if appropriate
+            if (ShouldApplyPlacements(tournamentState, matches, maxStageNo))
+            {
+                var placementMatches = matches
+                    .Select(m => new PlacementMatch(m.Id, m.StageNo, m.Bracket, m.RoundNo, 
+                        m.Player1TpId, m.Player2TpId, m.WinnerTpId, m.Status, 
+                        m.NextWinnerMatchId, m.NextLoserMatchId))
+                    .ToList();
+                    
+                _ = ApplyPlacements(placementMatches, stats);
+            }
+
+            // Calculate elimination status
+            var survivorTpIds = CalculateSurvivors(tournament, tournamentState, matches, maxStageNo);
+            UpdateEliminationStatus(stats, tournamentState, matches, activePlayers, championIds, survivorTpIds, maxStageNo);
+
+            return stats.Values
+                .OrderBy(s => s.PlacementRank ?? int.MaxValue)
+                .ThenBy(s => s.Seed ?? int.MaxValue)
+                .ThenBy(s => s.DisplayName)
+                .ToList();
+        }
+
+        private void PopulatePlayerStats(
+            List<MatchStatsData> matches,
+            Dictionary<int, TournamentPlayerStatsDto> stats,
+            HashSet<int> activePlayers)
+        {
             foreach (var match in matches)
             {
                 var isCompleted = match.Status == MatchStatus.Completed;
@@ -1213,11 +999,8 @@ namespace PoolMate.Api.Services
                         p1.MatchesPlayed++;
                         if (match.ScoreP1.HasValue) p1.RacksWon += match.ScoreP1.Value;
                         if (match.ScoreP2.HasValue) p1.RacksLost += match.ScoreP2.Value;
-
-                        if (match.WinnerTpId == match.Player1TpId)
-                            p1.Wins++;
-                        else if (match.WinnerTpId == match.Player2TpId)
-                            p1.Losses++;
+                        if (match.WinnerTpId == match.Player1TpId) p1.Wins++;
+                        else if (match.WinnerTpId == match.Player2TpId) p1.Losses++;
                     }
 
                     if (!isCompleted)
@@ -1234,58 +1017,113 @@ namespace PoolMate.Api.Services
                         p2.MatchesPlayed++;
                         if (match.ScoreP2.HasValue) p2.RacksWon += match.ScoreP2.Value;
                         if (match.ScoreP1.HasValue) p2.RacksLost += match.ScoreP1.Value;
-
-                        if (match.WinnerTpId == match.Player2TpId)
-                            p2.Wins++;
-                        else if (match.WinnerTpId == match.Player1TpId)
-                            p2.Losses++;
+                        if (match.WinnerTpId == match.Player2TpId) p2.Wins++;
+                        else if (match.WinnerTpId == match.Player1TpId) p2.Losses++;
                     }
 
                     if (!isCompleted)
                         activePlayers.Add(match.Player2TpId.Value);
                 }
             }
+        }
 
-            foreach (var id in activePlayers)
-            {
-                if (stats.TryGetValue(id, out var stat))
-                    stat.IsEliminated = false;
-            }
+        private HashSet<int> DetermineChampions(List<MatchStatsData> matches, int maxStageNo)
+        {
+            var finalMatchIds = matches
+                .Where(m => m.StageNo == maxStageNo && m.Status == MatchStatus.Completed && 
+                           m.WinnerTpId.HasValue && m.NextWinnerMatchId == null && m.NextLoserMatchId == null)
+                .Select(m => m.Id)
+                .ToHashSet();
 
-            var champions = matches
-                .Where(m => m.Status == MatchStatus.Completed && m.WinnerTpId.HasValue)
-                .Where(m => m.NextWinnerMatchId == null && m.NextLoserMatchId == null)
-                .Where(m => m.Bracket == BracketSide.Knockout || m.Bracket == BracketSide.Finals)
+            return matches
+                .Where(m => finalMatchIds.Contains(m.Id))
                 .Select(m => m.WinnerTpId!.Value)
-                .Distinct();
+                .ToHashSet();
+        }
 
-            foreach (var championId in champions)
+        private bool ShouldApplyPlacements(dynamic tournamentState, List<MatchStatsData> matches, int maxStageNo)
+        {
+            if (tournamentState.IsCompleted) return true;
+            
+            if (tournamentState.IsMultiStage && maxStageNo > 1)
             {
-                if (stats.TryGetValue(championId, out var stat))
-                    stat.IsEliminated = false;
+                return matches.Any(m => m.StageNo == 2 && m.Status == MatchStatus.Completed);
             }
+            
+            return false;
+        }
 
-            var placementMatches = matches
-                .Select(m => new PlacementMatch(
-                    m.Id,
-                    m.StageNo,
-                    m.Bracket,
-                    m.RoundNo,
-                    m.Player1TpId,
-                    m.Player2TpId,
-                    m.WinnerTpId,
-                    m.Status,
-                    m.NextWinnerMatchId,
-                    m.NextLoserMatchId))
-                .ToList();
+        private HashSet<int>? CalculateSurvivors(
+            Tournament tournament, 
+            dynamic tournamentState, 
+            List<MatchStatsData> matches, 
+            int maxStageNo)
+        {
+            if (!tournamentState.IsMultiStage || maxStageNo != 1) return null;
 
-            _ = ApplyPlacements(placementMatches, stats);
+            var stage1 = tournament.Stages.FirstOrDefault(s => s.StageNo == 1);
+            if (stage1 == null || !stage1.AdvanceCount.HasValue) return null;
 
-            return stats.Values
-                .OrderBy(s => s.PlacementRank ?? int.MaxValue)
-                .ThenBy(s => s.Seed ?? int.MaxValue)
-                .ThenBy(s => s.DisplayName)
-                .ToList();
+            var stage1Matches = matches.Where(m => m.StageNo == 1).ToList();
+            var survivors = new HashSet<int>();
+            var matchLookup = stage1Matches.ToDictionary(m => m.Id);
+            
+            foreach (var match in stage1Matches)
+            {
+                if (match.Status != MatchStatus.Completed)
+                {
+                    if (match.Player1TpId.HasValue) survivors.Add(match.Player1TpId.Value);
+                    if (match.Player2TpId.HasValue) survivors.Add(match.Player2TpId.Value);
+                    continue;
+                }
+
+                if (match.WinnerTpId.HasValue)
+                {
+                    var hasNext = match.NextWinnerMatchId.HasValue && matchLookup.ContainsKey(match.NextWinnerMatchId.Value);
+                    if (!hasNext) survivors.Add(match.WinnerTpId.Value);
+                }
+            }
+            
+            return survivors;
+        }
+
+        private void UpdateEliminationStatus(
+            Dictionary<int, TournamentPlayerStatsDto> stats,
+            dynamic tournamentState,
+            List<MatchStatsData> matches,
+            HashSet<int> activePlayers,
+            HashSet<int> championIds,
+            HashSet<int>? survivorTpIds,
+            int maxStageNo)
+        {
+            foreach (var stat in stats.Values)
+            {
+                if (!tournamentState.IsStarted || stat.MatchesPlayed == 0)
+                {
+                    stat.IsEliminated = false;
+                    continue;
+                }
+
+                var isActive = activePlayers.Contains(stat.TournamentPlayerId);
+                var isChampion = championIds.Contains(stat.TournamentPlayerId);
+                
+                if (tournamentState.IsMultiStage && maxStageNo > 1)
+                {
+                    var hasMatchInHighestStage = matches.Any(m => 
+                        m.StageNo == maxStageNo && 
+                        (m.Player1TpId == stat.TournamentPlayerId || m.Player2TpId == stat.TournamentPlayerId));
+                    
+                    stat.IsEliminated = !hasMatchInHighestStage || (!isActive && !isChampion);
+                }
+                else if (survivorTpIds != null)
+                {
+                    stat.IsEliminated = !survivorTpIds.Contains(stat.TournamentPlayerId);
+                }
+                else
+                {
+                    stat.IsEliminated = !(isActive || isChampion);
+                }
+            }
         }
 
         public async Task<IReadOnlyList<string>> GetBracketDebugViewAsync(int tournamentId, CancellationToken ct)
@@ -1325,77 +1163,6 @@ namespace PoolMate.Api.Services
             }
 
             return lines;
-        }
-
-        private async Task<Match> LoadMatchAggregateAsync(int matchId, CancellationToken ct)
-        {
-            var match = await _db.Matches
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .Include(m => m.WinnerTp)
-                .Include(m => m.Table)
-                .Include(m => m.Stage)
-                .FirstOrDefaultAsync(m => m.Id == matchId, ct);
-
-            return match ?? throw new KeyNotFoundException("Match not found.");
-        }
-
-        private static void EnsureWinnerBelongsToMatch(Match match, int winnerTpId)
-        {
-            if (match.Player1TpId != winnerTpId && match.Player2TpId != winnerTpId)
-                throw new InvalidOperationException("Winner must be one of the players in the match.");
-        }
-
-        private static void ValidateScoreInput(Match match, int? scoreP1, int? scoreP2, int? nextRaceTo)
-        {
-            if (scoreP1.HasValue && scoreP1.Value < 0)
-                throw new InvalidOperationException("Scores must be non-negative.");
-            if (scoreP2.HasValue && scoreP2.Value < 0)
-                throw new InvalidOperationException("Scores must be non-negative.");
-
-            if (scoreP1.HasValue && match.Player1TpId is null)
-                throw new InvalidOperationException("Cannot set score for an empty player slot.");
-            if (scoreP2.HasValue && match.Player2TpId is null)
-                throw new InvalidOperationException("Cannot set score for an empty player slot.");
-
-            var raceTo = nextRaceTo ?? match.RaceTo;
-            if (raceTo.HasValue)
-            {
-                if (scoreP1.HasValue && scoreP1.Value > raceTo.Value)
-                    throw new InvalidOperationException("Score cannot exceed the race-to target.");
-                if (scoreP2.HasValue && scoreP2.Value > raceTo.Value)
-                    throw new InvalidOperationException("Score cannot exceed the race-to target.");
-            }
-        }
-
-        private static bool HasProgress(int? scoreP1, int? scoreP2, int? tableId)
-            => scoreP1.HasValue || scoreP2.HasValue || tableId.HasValue;
-
-        private static int? InferWinnerFromScores(Match match)
-        {
-            if (!match.RaceTo.HasValue)
-                return null;
-
-            var race = match.RaceTo.Value;
-            var p1Wins = match.Player1TpId.HasValue && match.ScoreP1 == race;
-            var p2Wins = match.Player2TpId.HasValue && match.ScoreP2 == race;
-
-            if (p1Wins == p2Wins)
-                return null;
-
-            return p1Wins ? match.Player1TpId : match.Player2TpId;
-        }
-
-        private async Task<Dictionary<int, Match>> LoadTournamentMatchesDictionaryAsync(int tournamentId, CancellationToken ct)
-        {
-            var matches = await _db.Matches
-                .Where(m => m.TournamentId == tournamentId)
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .Include(m => m.WinnerTp)
-                .ToListAsync(ct);
-
-            return matches.ToDictionary(m => m.Id);
         }
 
         private void PropagateResult(Match match, Dictionary<int, Match> matchDict)
@@ -1490,161 +1257,6 @@ namespace PoolMate.Api.Services
             return $"Eliminated (Rank {rank})";
         }
 
-        private async Task<Match> LoadMatchForScoringAsync(int matchId, CancellationToken ct)
-        {
-            var match = await _db.Matches
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .Include(m => m.WinnerTp)
-                .Include(m => m.Table)
-                .Include(m => m.Stage)
-                .FirstOrDefaultAsync(m => m.Id == matchId, ct);
-
-            return match ?? throw new KeyNotFoundException("Match not found.");
-        }
-
-        private static void ValidateScoringAccess(Match match, ScoringContext actor, bool ensureNotCompleted)
-        {
-            if (ensureNotCompleted && match.Status == MatchStatus.Completed)
-                throw new InvalidOperationException("Match already completed.");
-
-            if (match.Stage.Status == StageStatus.Completed)
-                throw new InvalidOperationException("Stage already completed.");
-
-            if (actor.IsTableClient)
-            {
-                if (actor.TableId is null || !match.TableId.HasValue || actor.TableId.Value != match.TableId.Value)
-                    throw new InvalidOperationException("Table token does not match the assigned table.");
-
-                if (actor.TournamentId is null || actor.TournamentId.Value != match.TournamentId)
-                    throw new InvalidOperationException("Table token does not match the tournament.");
-            }
-        }
-
-        private void ApplyRowVersion(Match match, string rowVersionBase64)
-        {
-            if (string.IsNullOrWhiteSpace(rowVersionBase64))
-                throw new InvalidOperationException("Row version is required.");
-
-            byte[] rowVersion;
-            try
-            {
-                rowVersion = Convert.FromBase64String(rowVersionBase64);
-            }
-            catch (FormatException)
-            {
-                throw new InvalidOperationException("Row version format is invalid.");
-            }
-
-            _db.Entry(match).Property(m => m.RowVersion).OriginalValue = rowVersion;
-        }
-
-        private async Task SaveChangesWithConcurrencyAsync(Match match, CancellationToken ct)
-        {
-            try
-            {
-                await _db.SaveChangesAsync(ct);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                var latest = await GetMatchSnapshotAsync(match.Id, ct);
-                throw new ConcurrencyConflictException(latest);
-            }
-        }
-
-        private async Task<MatchDto> GetMatchSnapshotAsync(int matchId, CancellationToken ct)
-        {
-            var match = await _db.Matches
-                .Include(m => m.Player1Tp)
-                .Include(m => m.Player2Tp)
-                .Include(m => m.WinnerTp)
-                .Include(m => m.Table)
-                .AsNoTracking()
-                .FirstOrDefaultAsync(m => m.Id == matchId, ct)
-                ?? throw new KeyNotFoundException("Match not found.");
-
-            var stageEval = await EvaluateStageAsync(match.StageId, ct);
-            return MapToMatchDto(match, stageEval, stageEval.TournamentCompletionAvailable);
-        }
-
-        private async Task PublishRealtimeUpdates(Match match, MatchDto dto, bool bracketChanged, CancellationToken ct)
-        {
-            try
-            {
-                var groupName = TournamentHub.GetGroupName(match.TournamentId);
-                await _hubContext.Clients.Group(groupName).SendAsync("matchUpdated", dto, ct);
-
-                if (match.TableId.HasValue)
-                {
-                    var tableStatus = await TryBuildTableStatusAsync(match.TableId.Value, ct);
-                    if (tableStatus is not null)
-                    {
-                        await _hubContext.Clients.Group(groupName).SendAsync("tableUpdated", tableStatus, ct);
-                    }
-                }
-
-                if (bracketChanged)
-                {
-                    await _hubContext.Clients.Group(groupName).SendAsync("bracketUpdated", new { tournamentId = match.TournamentId }, ct);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to broadcast realtime updates for match {MatchId}", match.Id);
-            }
-        }
-
-        private async Task<TableStatusDto?> TryBuildTableStatusAsync(int tableId, CancellationToken ct)
-        {
-            var table = await _db.TournamentTables
-                .AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Id == tableId, ct);
-
-            if (table is null)
-                return null;
-
-            var activeMatch = await _db.Matches
-                .Where(m => m.TableId == tableId && m.Status != MatchStatus.Completed)
-                .OrderBy(m => m.Id)
-                .Select(m => new { m.Id, m.Status })
-                .FirstOrDefaultAsync(ct);
-
-            return new TableStatusDto
-            {
-                TableId = table.Id,
-                TournamentId = table.TournamentId,
-                Status = table.Status,
-                CurrentMatchId = activeMatch?.Id,
-                CurrentMatchStatus = activeMatch?.Status
-            };
-        }
-
-        private static int DetermineWinnerFromScores(int scoreP1, int scoreP2, int player1Id, int player2Id, int raceTo)
-        {
-            var p1Wins = scoreP1 == raceTo;
-            var p2Wins = scoreP2 == raceTo;
-
-            if (p1Wins == p2Wins)
-                throw new InvalidOperationException("Scores do not determine a unique winner.");
-
-            return p1Wins ? player1Id : player2Id;
-        }
-
-        private static bool ShouldIncludeInSummary(Match match)
-        {
-            if (match.Stage.Status == StageStatus.Completed && match.Status == MatchStatus.NotStarted)
-            {
-                var hasPlayersAssigned = match.Player1TpId.HasValue || match.Player2TpId.HasValue;
-                var hasProgress = match.ScoreP1.HasValue || match.ScoreP2.HasValue;
-                var hasSchedule = match.ScheduledUtc.HasValue;
-
-                if (!hasPlayersAssigned && !hasProgress && !hasSchedule)
-                    return false;
-            }
-
-            return true;
-        }
-
         private sealed record PlacementMatch(
             int Id,
             int StageNo,
@@ -1699,11 +1311,15 @@ namespace PoolMate.Api.Services
             var placedPlayerIds = new HashSet<int>();
             var nextRank = 1;
 
+            // Tìm stage cao nhất trước để tránh lấy nhầm final match của stage 1
+            var maxStageNo = matches.Any() ? matches.Max(m => m.StageNo) : 0;
+
+            // Tìm final match CHỈ Ở STAGE CAO NHẤT
             var finalMatch = matches
+                .Where(m => m.StageNo == maxStageNo)
                 .Where(m => m.Status == MatchStatus.Completed && m.WinnerTpId.HasValue)
                 .Where(m => m.NextWinnerMatchId == null && m.NextLoserMatchId == null)
-                .OrderByDescending(m => m.StageNo)
-                .ThenByDescending(m => m.RoundNo)
+                .OrderByDescending(m => m.RoundNo)
                 .ThenByDescending(m => m.Id)
                 .FirstOrDefault();
 
@@ -1821,28 +1437,6 @@ namespace PoolMate.Api.Services
             return 0;
         }
 
-        private static Dictionary<int, List<MatchSlotReference>> BuildDependencyMap(Dictionary<int, Match> matches)
-        {
-            var map = new Dictionary<int, List<MatchSlotReference>>();
-
-            foreach (var match in matches.Values)
-            {
-                if (match.Player1SourceMatchId.HasValue && match.Player1SourceType is MatchSlotSourceType.WinnerOf or MatchSlotSourceType.LoserOf)
-                {
-                    map.TryAdd(match.Player1SourceMatchId.Value, new List<MatchSlotReference>());
-                    map[match.Player1SourceMatchId.Value].Add(new MatchSlotReference(match, 1, match.Player1SourceType));
-                }
-
-                if (match.Player2SourceMatchId.HasValue && match.Player2SourceType is MatchSlotSourceType.WinnerOf or MatchSlotSourceType.LoserOf)
-                {
-                    map.TryAdd(match.Player2SourceMatchId.Value, new List<MatchSlotReference>());
-                    map[match.Player2SourceMatchId.Value].Add(new MatchSlotReference(match, 2, match.Player2SourceType));
-                }
-            }
-
-            return map;
-        }
-
         private void RewindCascade(int sourceMatchId,
             Dictionary<int, List<MatchSlotReference>> dependencyMap,
             HashSet<int> processedMatches,
@@ -1887,92 +1481,54 @@ namespace PoolMate.Api.Services
             match.Table = null;
         }
 
-        private async Task<TournamentTable> ValidateTableSelectionAsync(Match match, int tableId, CancellationToken ct)
-        {
-            var table = await _db.TournamentTables
-                .FirstOrDefaultAsync(t => t.Id == tableId, ct)
-                ?? throw new InvalidOperationException("Table not found.");
-
-            if (table.TournamentId != match.TournamentId)
-                throw new InvalidOperationException("Table belongs to another tournament.");
-
-            if (table.Status == TableStatus.Closed)
-                throw new InvalidOperationException("Table is closed.");
-
-            if (table.Status == TableStatus.InUse && match.TableId != table.Id)
-            {
-                var busy = await _db.Matches
-                    .AnyAsync(m => m.TournamentId == match.TournamentId && m.TableId == table.Id && m.Id != match.Id && m.Status != MatchStatus.Completed, ct);
-                if (busy)
-                    throw new InvalidOperationException("Table is currently assigned to another match.");
-            }
-
-            return table;
-        }
-
-        private async Task UpdateTableUsageAsync(Match match, int? previousTableId, MatchStatus previousStatus, CancellationToken ct)
-        {
-            if (previousTableId.HasValue && (previousTableId != match.TableId || previousStatus != match.Status))
-            {
-                await MarkTableOpenIfIdleAsync(previousTableId.Value, match.Id, ct);
-            }
-
-            if (!match.TableId.HasValue)
-                return;
-
-            if (match.Status == MatchStatus.InProgress)
-            {
-                await MarkTableInUseAsync(match.TableId.Value, ct);
-            }
-            else if (match.Status == MatchStatus.Completed || match.Status == MatchStatus.NotStarted)
-            {
-                await MarkTableOpenIfIdleAsync(match.TableId.Value, match.Id, ct);
-            }
-        }
-
-        private async Task MarkTableInUseAsync(int tableId, CancellationToken ct)
-        {
-            var table = await _db.TournamentTables.FirstOrDefaultAsync(t => t.Id == tableId, ct)
-                ?? throw new InvalidOperationException("Table not found.");
-
-            if (table.Status != TableStatus.InUse)
-                table.Status = TableStatus.InUse;
-        }
-
-        private async Task MarkTableOpenIfIdleAsync(int tableId, int currentMatchId, CancellationToken ct)
-        {
-            var table = await _db.TournamentTables.FirstOrDefaultAsync(t => t.Id == tableId, ct);
-            if (table is null)
-                return;
-
-            if (table.Status == TableStatus.Closed)
-                return;
-
-            var busy = await _db.Matches
-                .AnyAsync(m => m.TableId == tableId && m.Id != currentMatchId && m.Status != MatchStatus.Completed, ct);
-
-            if (!busy)
-                table.Status = TableStatus.Open;
-        }
-
         private sealed record MatchSlotReference(Match Match, int SlotIndex, MatchSlotSourceType? SourceType);
 
-        private StagePreviewDto BuildStagePreview(
-            int stageNo, BracketType type, BracketOrdering ordering, int size, List<PlayerSeed>? players)
+        private StageDto BuildStagePreview(
+            Tournament tournament,
+            int stageNo,
+            BracketType type,
+            BracketOrdering ordering,
+            int size,
+            List<PlayerSeed>? players,
+            int? advanceCount)
         {
             var slots = MakeSlots(players, size, ordering);
-            return type == BracketType.SingleElimination
-                ? PreviewSingle(stageNo, ordering, slots)
-                : PreviewDouble(stageNo, ordering, slots);
+
+            var stage = new TournamentStage
+            {
+                Id = -stageNo,
+                TournamentId = tournament.Id,
+                StageNo = stageNo,
+                Type = type,
+                Ordering = ordering,
+                Status = StageStatus.NotStarted,
+                AdvanceCount = advanceCount
+            };
+
+            var previewTournament = new Tournament
+            {
+                Id = tournament.Id,
+                IsMultiStage = tournament.IsMultiStage,
+                BracketType = tournament.BracketType,
+                Stage1Ordering = tournament.Stage1Ordering,
+                Stage2Ordering = tournament.Stage2Ordering,
+                AdvanceToStage2Count = tournament.AdvanceToStage2Count,
+                Stages = new List<TournamentStage> { stage }
+            };
+            stage.Tournament = previewTournament;
+
+            List<Match> matches = type == BracketType.SingleElimination
+                ? CreatePreviewSingleMatches(tournament, stage, slots)
+                : CreatePreviewDoubleMatches(tournament, stage, slots, advanceCount);
+
+            return BuildStageDto(previewTournament, stage, matches);
         }
 
         private List<PlayerSeed?> MakeSlots(List<PlayerSeed>? players, int size, BracketOrdering ordering)
         {
             var slots = Enumerable.Repeat<PlayerSeed?>(null, size).ToList();
             if (players is null || players.Count == 0) return slots;
-            // If ordering is Random, distribute players round-robin across matches so
-            // each match gets at most one player before filling second slots. This
-            // maximizes number of player-vs-BYE matches for sparse fields.
+
             if (ordering == BracketOrdering.Random)
             {
                 var list = players.ToList();
@@ -1994,16 +1550,13 @@ namespace PoolMate.Api.Services
                 return slots;
             }
 
-            // For seeded ordering, place players into seed-position indices so BYEs are distributed evenly.
             var seeded = players.Where(p => p.Seed.HasValue).OrderBy(p => p.Seed!.Value).ToList();
             var unseeded = players.Where(p => !p.Seed.HasValue).ToList();
-
-            // Shuffle unseeded players so their positions are random among remaining slots
             FisherYates(unseeded);
 
             var positions = BuildSeedPositions(size);
-
             int idx = 0;
+
             // Place seeded players in order into the seed positions
             for (; idx < seeded.Count && idx < positions.Length; idx++)
             {
@@ -2069,6 +1622,101 @@ namespace PoolMate.Api.Services
             return slots;
         }
 
+        private List<Match> CreatePreviewSingleMatches(Tournament tournament, TournamentStage stage, List<PlayerSeed?> slots)
+        {
+            var matches = CreateSingleBracketMatches(tournament.Id, stage, slots, BracketSide.Knockout);
+            int nextMatchId = -1;
+            AssignSyntheticMatchIds(matches, ref nextMatchId);
+            WireSingleEliminationMatches(matches);
+            PopulatePreviewSeedSnapshots(matches, slots, tournament.Id);
+            return matches;
+        }
+
+        private List<Match> CreatePreviewDoubleMatches(Tournament tournament, TournamentStage stage, List<PlayerSeed?> slots, int? advanceCount)
+        {
+            var bracketSize = slots.Count;
+            var trimPlan = advanceCount.HasValue && advanceCount.Value > 0
+                ? CalculateTrimPlan(bracketSize, advanceCount.Value)
+                : null;
+
+            var winners = CreateWinnersBracketMatches(tournament.Id, stage, slots, trimPlan?.WinnersRounds);
+            var losers = trimPlan is { LosersRounds: > 0 }
+                ? CreateLosersBracketMatches(tournament.Id, stage, bracketSize, trimPlan.LosersRounds)
+                : CreateLosersBracketMatches(tournament.Id, stage, bracketSize, null);
+            var finals = !stage.AdvanceCount.HasValue
+                ? CreateFinalsBracketMatches(tournament.Id, stage)
+                : new List<Match>();
+
+            int nextMatchId = -1;
+            AssignSyntheticMatchIds(winners, ref nextMatchId);
+            AssignSyntheticMatchIds(losers, ref nextMatchId);
+            AssignSyntheticMatchIds(finals, ref nextMatchId);
+
+            PopulatePreviewSeedSnapshots(winners, slots, tournament.Id);
+
+            var fullWBRounds = (int)Math.Log2(bracketSize);
+            var feedRounds = trimPlan?.WinnersRounds ?? fullWBRounds;
+            MapDoubleEliminationFlow(winners, losers, finals, feedRounds);
+
+            return winners
+                .Concat(losers)
+                .Concat(finals)
+                .ToList();
+        }
+
+        private static void AssignSyntheticMatchIds(IEnumerable<Match> matches, ref int nextMatchId)
+        {
+            foreach (var match in matches)
+            {
+                match.Id = nextMatchId--;
+                if (match.RowVersion == null)
+                {
+                    match.RowVersion = Array.Empty<byte>();
+                }
+            }
+        }
+
+        private static void PopulatePreviewSeedSnapshots(IEnumerable<Match> matches, List<PlayerSeed?> slots, int tournamentId)
+        {
+            if (slots.Count == 0)
+                return;
+
+            var firstRoundMatches = matches
+                .Where(m => (m.Bracket == BracketSide.Winners || m.Bracket == BracketSide.Knockout) && m.RoundNo == 1)
+                .OrderBy(m => m.PositionInRound)
+                .ToList();
+
+            int cursor = 0;
+            foreach (var match in firstRoundMatches)
+            {
+                var p1 = cursor < slots.Count ? slots[cursor++] : null;
+                var p2 = cursor < slots.Count ? slots[cursor++] : null;
+
+                if (p1 is not null)
+                {
+                    match.Player1Tp = CreateSnapshotPlayer(p1, tournamentId);
+                }
+
+                if (p2 is not null)
+                {
+                    match.Player2Tp = CreateSnapshotPlayer(p2, tournamentId);
+                }
+            }
+        }
+
+        private static TournamentPlayer CreateSnapshotPlayer(PlayerSeed seed, int tournamentId)
+        {
+            return new TournamentPlayer
+            {
+                Id = seed.TpId,
+                TournamentId = tournamentId,
+                DisplayName = seed.Name,
+                Seed = seed.Seed,
+                Country = seed.Country,
+                SkillLevel = seed.FargoRating
+            };
+        }
+
         private static int[] BuildSeedPositions(int size)
         {
             if (size < 2)
@@ -2089,71 +1737,6 @@ namespace PoolMate.Api.Services
             return res;
         }
 
-
-        private StagePreviewDto PreviewSingle(int stageNo, BracketOrdering ordering, List<PlayerSeed?> slots)
-        {
-            var dto = new StagePreviewDto
-            {
-                StageNo = stageNo,
-                Type = BracketType.SingleElimination,
-                Ordering = ordering,
-                BracketSize = slots.Count
-            };
-
-            int n = slots.Count;
-            int matchesRound1 = n / 2;
-
-            var r1 = new RoundPreviewDto { RoundNo = 1 };
-            for (int i = 0; i < matchesRound1; i++)
-            {
-                var p1 = slots[2 * i];
-                var p2 = slots[2 * i + 1];
-                r1.Matches.Add(new MatchPreviewDto
-                {
-                    PositionInRound = i + 1,
-                    P1Name = p1?.Name,
-                    P1Seed = p1?.Seed,
-                    P1Country = p1?.Country,
-                    P2Name = p2?.Name,
-                    P2Seed = p2?.Seed,
-                    P2Country = p2?.Country,
-                    P1FargoRating = p1?.FargoRating,
-                    P2FargoRating = p2?.FargoRating
-                });
-            }
-            dto.Rounds.Add(r1);
-
-            int roundNo = 2;
-            int m = matchesRound1 / 2;
-            while (m > 0)
-            {
-                var r = new RoundPreviewDto { RoundNo = roundNo++ };
-                for (int i = 0; i < m; i++)
-                {
-                    r.Matches.Add(new MatchPreviewDto
-                    {
-                        PositionInRound = i + 1,
-                        P1Name = null,
-                        P2Name = null,
-                        P1Country = null,
-                        P2Country = null
-                    });
-                }
-                dto.Rounds.Add(r);
-                m /= 2;
-            }
-
-            return dto;
-        }
-
-
-        private StagePreviewDto PreviewDouble(int stageNo, BracketOrdering ordering, List<PlayerSeed?> slots)
-        {
-            var dto = PreviewSingle(stageNo, ordering, slots);
-            dto.Type = BracketType.DoubleElimination;
-            return dto;
-        }
-
         private void BuildAndPersistSingleOrDouble(int tournamentId, TournamentStage stage, BracketType type,
         List<PlayerSeed?> slots, CancellationToken ct)
         {
@@ -2163,20 +1746,50 @@ namespace PoolMate.Api.Services
             }
             else
             {
+                //kiểm tra kích thước bracket có phải là lũy thừa của 2 không
                 if ((slots.Count & (slots.Count - 1)) != 0)
                     throw new InvalidOperationException("Double elimination bracket requires the bracket size to be a power of two.");
 
-                // 1. Tạo Winners bracket
-                var winnersMatches = BuildWinnersBracket(tournamentId, stage, slots, ct);
+                
+                int bracketSize = slots.Count;
+                var fullWBRounds = (int)Math.Log2(bracketSize);
 
-                // 2. Tạo Losers bracket  
-                var losersMatches = BuildLosersBracket(tournamentId, stage, slots.Count, ct);
+                //nếu là stage có advance count thì tính trim plan (cắt nhánh)
+                TrimPlan? trimPlan = stage.AdvanceCount.HasValue && stage.AdvanceCount.Value > 0
+                    ? CalculateTrimPlan(bracketSize, stage.AdvanceCount.Value)
+                    : null;
 
-                // 3. Tạo Finals bracket
-                var finalsMatches = BuildFinalsBracket(tournamentId, stage, ct);
+                var winnersBuildLimit = trimPlan?.WinnersRounds;
+
+                // 1. Tạo Winners bracket (limited by keepWinnersRounds if present)
+                var winnersMatches = BuildWinnersBracket(tournamentId, stage, slots, ct, winnersBuildLimit);
+
+                // 2. Determine necessary losers rounds (based on winners kept)
+                var losersMatches = new List<Match>();
+                if (trimPlan is { LosersRounds: > 0 } planWithLosers)
+                {
+                    losersMatches = BuildLosersBracket(tournamentId, stage, bracketSize, ct, planWithLosers.LosersRounds);
+                }
+                else
+                {
+                    // Single-stage double elimination: build full losers bracket
+                    losersMatches = BuildLosersBracket(tournamentId, stage, bracketSize, ct);
+                }
+
+                // 3. Create finals only when this is a single-stage bracket (no AdvanceCount)
+                // and we kept all winners rounds (i.e., champion path exists). For multi-stage
+                // Stage 1 we should NOT create the grand-final here because Stage 2 will be
+                // responsible for its own finals.
+                List<Match> finalsMatches = new List<Match>();
+                var keptAllWinnersRounds = !stage.AdvanceCount.HasValue;
+                if (keptAllWinnersRounds)
+                {
+                    finalsMatches = BuildFinalsBracket(tournamentId, stage, ct);
+                }
 
                 // 4. Map NextWinner/NextLoser relationships
-                MapDoubleEliminationFlow(winnersMatches, losersMatches, finalsMatches);
+                var feedRounds = trimPlan?.WinnersRounds ?? fullWBRounds;
+                MapDoubleEliminationFlow(winnersMatches, losersMatches, finalsMatches, feedRounds);
 
                 _db.SaveChanges();
             }
@@ -2186,6 +1799,17 @@ namespace PoolMate.Api.Services
         private void BuildAndPersistSingle(int tournamentId, TournamentStage stage,
             List<PlayerSeed?> slots, CancellationToken ct, BracketSide bracket = BracketSide.Knockout)
         {
+            var created = CreateSingleBracketMatches(tournamentId, stage, slots, bracket);
+            _db.Matches.AddRange(created);
+            _db.SaveChanges();
+
+            WireSingleEliminationMatches(created);
+            _db.SaveChanges();
+        }
+
+        private List<Match> CreateSingleBracketMatches(int tournamentId, TournamentStage stage,
+            List<PlayerSeed?> slots, BracketSide bracket)
+        {
             var n = slots.Count;
             if (n == 0)
                 throw new InvalidOperationException("Single elimination bracket requires at least two slots.");
@@ -2194,14 +1818,14 @@ namespace PoolMate.Api.Services
                 throw new InvalidOperationException("Single elimination bracket requires an even number of slots.");
 
             var roundNo = 1;
-            var matches = n / 2;
+            var matchesPerRound = n / 2;
             var cursor = 0;
 
             var created = new List<Match>();
 
-            while (matches > 0)
+            while (matchesPerRound > 0)
             {
-                for (int pos = 1; pos <= matches; pos++)
+                for (int pos = 1; pos <= matchesPerRound; pos++)
                 {
                     PlayerSeed? p1 = null;
                     PlayerSeed? p2 = null;
@@ -2233,17 +1857,19 @@ namespace PoolMate.Api.Services
                         Player2TpId = p2?.TpId,
                         Player1SourceType = p1Source,
                         Player2SourceType = p2Source,
-                        Status = MatchStatus.NotStarted
+                        Status = MatchStatus.NotStarted,
                     });
                 }
 
                 roundNo++;
-                matches /= 2;
+                matchesPerRound /= 2;
             }
-            _db.Matches.AddRange(created);
-            _db.SaveChanges(); // lấy Id để set NextWinnerMatchId
 
-            // set next pointers (W → W) cho SE/KO (hoặc Winners của DE)
+            return created;
+        }
+
+        private void WireSingleEliminationMatches(List<Match> created)
+        {
             var grouped = created.GroupBy(m => m.RoundNo).OrderBy(g => g.Key).ToList();
             for (int r = 0; r < grouped.Count - 1; r++)
             {
@@ -2251,12 +1877,11 @@ namespace PoolMate.Api.Services
                 var nxt = grouped[r + 1].OrderBy(x => x.PositionInRound).ToList();
                 for (int i = 0; i < cur.Count; i++)
                 {
-                    var nextPos = (i / 2); // 0-based
+                    var nextPos = i / 2;
                     cur[i].NextWinnerMatchId = nxt[nextPos].Id;
                     SetSlotSource(nxt[nextPos], (i % 2 == 0) ? 1 : 2, MatchSlotSourceType.WinnerOf, cur[i].Id);
                 }
             }
-            _db.SaveChanges();
         }
 
         private static int[] GetLosersPattern(int bracketSize)
@@ -2295,6 +1920,57 @@ namespace PoolMate.Api.Services
             return round <= totalLosersRounds ? round : 0;
         }
 
+        private sealed record TrimPlan(int WinnersRounds, int LosersRounds);
+
+        private TrimPlan CalculateTrimPlan(int bracketSize, int advanceCount)
+        {
+            var fullWinnersRounds = (int)Math.Log2(bracketSize);
+            var losersPattern = GetLosersPattern(bracketSize);
+
+            if (advanceCount < 2 || advanceCount >= bracketSize)
+                return new TrimPlan(fullWinnersRounds, losersPattern.Length);
+
+            if ((advanceCount & (advanceCount - 1)) != 0)
+                return new TrimPlan(fullWinnersRounds, losersPattern.Length);
+
+            var winnersTarget = Math.Max(1, advanceCount / 2);
+            var losersTarget = Math.Max(1, advanceCount - winnersTarget);
+
+            var winnersRatio = (double)bracketSize / winnersTarget;
+            var winnersRounds = Math.Clamp(CeilLog2(winnersRatio), 1, fullWinnersRounds);
+
+            var losersRounds = DetermineLosersRoundsForTarget(losersPattern, losersTarget);
+            var feedRequirement = DetermineTargetLosersRound(winnersRounds, losersPattern.Length);
+            losersRounds = Math.Max(losersRounds, feedRequirement);
+
+            if (losersPattern.Length == 0)
+                losersRounds = 0;
+            else if (losersRounds == 0)
+                losersRounds = Math.Min(1, losersPattern.Length);
+
+            return new TrimPlan(winnersRounds, losersRounds);
+        }
+
+        private static int CeilLog2(double value)
+        {
+            if (value <= 1d) return 0;
+            return (int)Math.Ceiling(Math.Log2(value));
+        }
+
+        private static int DetermineLosersRoundsForTarget(IReadOnlyList<int> pattern, int target)
+        {
+            if (pattern.Count == 0 || target <= 0)
+                return 0;
+
+            for (int i = 0; i < pattern.Count; i++)
+            {
+                if (pattern[i] <= target)
+                    return i + 1;
+            }
+
+            return pattern.Count;
+        }
+
         private static int CalculateLosersIndex(int winnerIndex, int winnersCount, int losersCount)
         {
             if (losersCount <= 0)
@@ -2312,8 +1988,15 @@ namespace PoolMate.Api.Services
             return proportional;
         }
 
+        private List<Match> BuildWinnersBracket(int tournamentId, TournamentStage stage, List<PlayerSeed?> slots, CancellationToken ct, int? keepRounds)
+        {
+            var created = CreateWinnersBracketMatches(tournamentId, stage, slots, keepRounds);
+            _db.Matches.AddRange(created);
+            _db.SaveChanges();
+            return created;
+        }
 
-        private List<Match> BuildWinnersBracket(int tournamentId, TournamentStage stage, List<PlayerSeed?> slots, CancellationToken ct)
+        private List<Match> CreateWinnersBracketMatches(int tournamentId, TournamentStage stage, List<PlayerSeed?> slots, int? keepRounds)
         {
             int n = slots.Count;
             int roundNo = 1;
@@ -2324,6 +2007,8 @@ namespace PoolMate.Api.Services
 
             while (matches > 0)
             {
+                if (keepRounds.HasValue && roundNo > keepRounds.Value)
+                    break;
                 for (int pos = 1; pos <= matches; pos++)
                 {
                     PlayerSeed? p1 = null;
@@ -2346,7 +2031,7 @@ namespace PoolMate.Api.Services
                         Player2TpId = p2?.TpId,
                         Player1SourceType = roundNo == 1 ? MatchSlotSourceType.Seed : null,
                         Player2SourceType = roundNo == 1 ? MatchSlotSourceType.Seed : null,
-                        Status = MatchStatus.NotStarted
+                        Status = MatchStatus.NotStarted,
                     });
                 }
 
@@ -2354,12 +2039,18 @@ namespace PoolMate.Api.Services
                 matches /= 2;
             }
 
-            _db.Matches.AddRange(created);
-            _db.SaveChanges();
             return created;
         }
 
-        private List<Match> BuildLosersBracket(int tournamentId, TournamentStage stage, int bracketSize, CancellationToken ct)
+        private List<Match> BuildLosersBracket(int tournamentId, TournamentStage stage, int bracketSize, CancellationToken ct, int? maxRound = null)
+        {
+            var losersMatches = CreateLosersBracketMatches(tournamentId, stage, bracketSize, maxRound);
+            _db.Matches.AddRange(losersMatches);
+            _db.SaveChanges();
+            return losersMatches;
+        }
+
+        private List<Match> CreateLosersBracketMatches(int tournamentId, TournamentStage stage, int bracketSize, int? maxRound)
         {
             var losersMatches = new List<Match>();
             var pattern = GetLosersPattern(bracketSize);
@@ -2370,6 +2061,8 @@ namespace PoolMate.Api.Services
 
             for (int round = 1; round <= losersRounds; round++)
             {
+                if (maxRound.HasValue && round > maxRound.Value)
+                    break;
                 int matchesInRound = pattern[round - 1];
 
                 for (int pos = 1; pos <= matchesInRound; pos++)
@@ -2381,19 +2074,25 @@ namespace PoolMate.Api.Services
                         Bracket = BracketSide.Losers,
                         RoundNo = round,
                         PositionInRound = pos,
-                        Status = MatchStatus.NotStarted
+                        Status = MatchStatus.NotStarted,
                     });
                 }
             }
 
-            _db.Matches.AddRange(losersMatches);
-            _db.SaveChanges();
             return losersMatches;
         }
 
         private List<Match> BuildFinalsBracket(int tournamentId, TournamentStage stage, CancellationToken ct)
         {
-            var finalsMatches = new List<Match>
+            var finalsMatches = CreateFinalsBracketMatches(tournamentId, stage);
+            _db.Matches.AddRange(finalsMatches);
+            _db.SaveChanges();
+            return finalsMatches;
+        }
+
+        private static List<Match> CreateFinalsBracketMatches(int tournamentId, TournamentStage stage)
+        {
+            return new List<Match>
             {
                 new Match
                 {
@@ -2402,25 +2101,24 @@ namespace PoolMate.Api.Services
                     Bracket = BracketSide.Finals,
                     RoundNo = 1,
                     PositionInRound = 1,
-                    Status = MatchStatus.NotStarted
+                    Status = MatchStatus.NotStarted,
                 }
             };
-
-            _db.Matches.AddRange(finalsMatches);
-            _db.SaveChanges();
-            return finalsMatches;
         }
 
-        private void MapDoubleEliminationFlow(List<Match> winnersMatches, List<Match> losersMatches, List<Match> finalsMatches)
+        private void MapDoubleEliminationFlow(List<Match> winnersMatches, List<Match> losersMatches, List<Match> finalsMatches, int winnersFeedRounds)
         {
             // 1. Map Winners internal flow
             MapWinnersBracketFlow(winnersMatches);
 
-            // 2. Map Losers internal flow  
-            MapLosersBracketFlow(losersMatches);
+            // 2. Map Winners to Losers flow (do this before mapping losers internal flow)
+            // so that loser-slot sources are allocated first. This avoids a situation
+            // where the losers internal mapping fills all slots with WinnerOf sources
+            // and leaves no slot available for LoserOf assignments.
+            MapWinnersToLosersFlow(winnersMatches, losersMatches, winnersFeedRounds);
 
-            // 3. Map Winners to Losers flow
-            MapWinnersToLosersFlow(winnersMatches, losersMatches);
+            // 3. Map Losers internal flow
+            MapLosersBracketFlow(losersMatches);
 
             // 4. Map to Finals
             MapFinalsConnections(winnersMatches, losersMatches, finalsMatches);
@@ -2487,7 +2185,7 @@ namespace PoolMate.Api.Services
             }
         }
 
-        private void MapWinnersToLosersFlow(List<Match> winnersMatches, List<Match> losersMatches)
+        private void MapWinnersToLosersFlow(List<Match> winnersMatches, List<Match> losersMatches, int maxWinnersRoundForLosers)
         {
             if (winnersMatches.Count == 0 || losersMatches.Count == 0)
                 return;
@@ -2516,6 +2214,8 @@ namespace PoolMate.Api.Services
             {
                 var winnersRound = winnersGrouped[wrIndex];
                 var winnersRoundNumber = wrIndex + 1;
+                if (maxWinnersRoundForLosers > 0 && winnersRoundNumber > maxWinnersRoundForLosers)
+                    break;
                 var targetLosersRound = DetermineTargetLosersRound(winnersRoundNumber, totalLosersRounds);
                 if (targetLosersRound == 0)
                     continue;
@@ -2692,6 +2392,71 @@ namespace PoolMate.Api.Services
             throw new InvalidOperationException($"No available slot for loser of match {sourceMatchId} in match {match.Id}.");
         }
 
+        // Recursively resolve a textual projection for a match slot.
+        // slotIndex: 1 or 2
+        private string? ResolveProjectedPlayerDescription(Match match, int slotIndex, Dictionary<int, Match> matchLookup, HashSet<int> visited)
+        {
+            if (match == null) return null;
+            if (visited.Contains(match.Id)) return null; // avoid cycles
+            visited.Add(match.Id);
+
+            // If slot already has an assigned player, return the display name
+            if (slotIndex == 1 && match.Player1Tp != null)
+                return match.Player1Tp.DisplayName;
+            if (slotIndex == 2 && match.Player2Tp != null)
+                return match.Player2Tp.DisplayName;
+
+            MatchSlotSourceType? sourceType = slotIndex == 1 ? match.Player1SourceType : match.Player2SourceType;
+            int? sourceMatchId = slotIndex == 1 ? match.Player1SourceMatchId : match.Player2SourceMatchId;
+
+            if (sourceType is null || sourceMatchId is null)
+                return null;
+
+            if (!matchLookup.TryGetValue(sourceMatchId.Value, out var src))
+                return null;
+
+            // If source match has seeded players, show their seed names combined
+            string DescribeMatchPlayers(Match m)
+            {
+                var p1 = m.Player1Tp != null ? m.Player1Tp.DisplayName : null;
+                var p2 = m.Player2Tp != null ? m.Player2Tp.DisplayName : null;
+                if (p1 != null && p2 != null)
+                    return $"({p1} vs {p2})";
+                if (p1 != null) return p1;
+                if (p2 != null) return p2;
+                return "(TBD)";
+            }
+
+            switch (sourceType)
+            {
+                case MatchSlotSourceType.WinnerOf:
+                    // If source match has both participants, show Winner(of p1 vs p2)
+                    if (src.Player1Tp != null || src.Player2Tp != null)
+                        return $"Winner {DescribeMatchPlayers(src)}";
+                    // else try to resolve recursively each side (use first non-null)
+                    var a = ResolveProjectedPlayerDescription(src, 1, matchLookup, visited);
+                    var b = ResolveProjectedPlayerDescription(src, 2, matchLookup, visited);
+                    if (a != null && b != null) return $"Winner ({a} vs {b})";
+                    if (a != null) return a;
+                    if (b != null) return b;
+                    return "(TBD)";
+
+                case MatchSlotSourceType.LoserOf:
+                    if (src.Player1Tp != null || src.Player2Tp != null)
+                        return $"Loser {DescribeMatchPlayers(src)}";
+                    // recursively attempt to describe losers
+                    var la = ResolveProjectedPlayerDescription(src, 1, matchLookup, visited);
+                    var lb = ResolveProjectedPlayerDescription(src, 2, matchLookup, visited);
+                    if (la != null && lb != null) return $"Loser ({la} vs {lb})";
+                    if (la != null) return la;
+                    if (lb != null) return lb;
+                    return "(TBD)";
+
+                default:
+                    return null;
+            }
+        }
+
         private bool TryCompleteMatchByBye(Match match, Dictionary<int, Match> matchDict)
         {
             if (match.Status != MatchStatus.NotStarted)
@@ -2749,13 +2514,36 @@ namespace PoolMate.Api.Services
 
         private StageEvaluation EvaluateStageState(Tournament tournament, TournamentStage stage, List<Match> matches)
         {
-            var survivors = matches
-                .Where(m => m.Status != MatchStatus.Completed)
-                .SelectMany(m => new[] { m.Player1TpId, m.Player2TpId })
-                .Where(id => id.HasValue)
-                .Select(id => id!.Value)
-                .Distinct()
-                .ToList();
+            var matchLookup = matches.ToDictionary(m => m.Id);
+            var survivorSet = new HashSet<int>();
+            var survivors = new List<int>();
+
+            void AddSurvivor(int tpId)
+            {
+                if (survivorSet.Add(tpId))
+                {
+                    survivors.Add(tpId);
+                }
+            }
+
+            foreach (var match in matches)
+            {
+                if (match.Status != MatchStatus.Completed)
+                {
+                    if (match.Player1TpId.HasValue) AddSurvivor(match.Player1TpId.Value);
+                    if (match.Player2TpId.HasValue) AddSurvivor(match.Player2TpId.Value);
+                    continue;
+                }
+
+                if (stage.AdvanceCount.HasValue && match.WinnerTpId.HasValue)
+                {
+                    var hasNext = match.NextWinnerMatchId.HasValue && matchLookup.ContainsKey(match.NextWinnerMatchId.Value);
+                    if (!hasNext)
+                    {
+                        AddSurvivor(match.WinnerTpId.Value);
+                    }
+                }
+            }
 
             var actualBracketSize = matches.Any() ? CalculateBracketSize(matches) : 0;
 

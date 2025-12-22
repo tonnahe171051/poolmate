@@ -15,28 +15,42 @@ public class AuthController(IAuthService auth, IConfiguration config) : Controll
     [AllowAnonymous]
     public async Task<IActionResult> Register([FromBody] RegisterModel model, CancellationToken ct)
     {
-        var frontendUrl = config["AppSettings:FrontendUrl"] ?? "http://localhost:3000";
-        var res = await auth.RegisterAsync(model, frontendUrl, ct);
-        return res.Status == "Success" ? Ok(res) : BadRequest(res);
-    }
-
-    [HttpPost("register-admin")]
-    [Authorize(Roles = UserRoles.ADMIN)] 
-    public async Task<IActionResult> RegisterAdmin([FromBody] RegisterModel model, CancellationToken ct)
-    {
-        var res = await auth.RegisterAdminAsync(model, ct); 
-        return res.Status == "Success" ? Ok(res) : BadRequest(res);
+        try
+        {
+            var frontendUrl = config["AppSettings:FrontendUrl"] ?? "http://localhost:3000";
+            var res = await auth.RegisterAsync(model, frontendUrl, ct);
+            
+            if (res.Status == "Success")
+                return Ok(new { message = res.Message });
+            
+            return BadRequest(new { message = res.Message });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpGet("confirm-email")]
     [AllowAnonymous]
     public async Task<IActionResult> ConfirmEmail([FromQuery] string userId, [FromQuery] string token, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(token))
-            return BadRequest("Missing userId or token");
+        try
+        {
+            if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(token))
+                return BadRequest(new { message = "Missing userId or token" });
 
-        var res = await auth.ConfirmEmailAsync(userId, token, ct);
-        return res.Status == "Success" ? Ok(res) : BadRequest(res);
+            var res = await auth.ConfirmEmailAsync(userId, token, ct);
+            
+            if (res.Status == "Success")
+                return Ok(new { message = res.Message });
+            
+            return BadRequest(new { message = res.Message });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("login")]
@@ -46,7 +60,8 @@ public class AuthController(IAuthService auth, IConfiguration config) : Controll
         try
         {
             var r = await auth.LoginAsync(model, ct);
-            if (r is null) return Unauthorized();
+            if (r is null)
+                return Unauthorized(new { message = "Invalid email or password." });
 
             return Ok(new
             {
@@ -62,42 +77,79 @@ public class AuthController(IAuthService auth, IConfiguration config) : Controll
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { message = "Email is not confirmed." });
         }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("forgot-password")]
     [AllowAnonymous]
     public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordModel model, CancellationToken ct)
     {
-        var frontendUrl = config["AppSettings:FrontendUrl"] ?? "http://localhost:3000";
-        var res = await auth.ForgotPasswordAsync(model.Email!, frontendUrl, ct);
-        return res.Status == "Success" ? Ok(res) : BadRequest(res);
+        try
+        {
+            var frontendUrl = config["AppSettings:FrontendUrl"] ?? "http://localhost:3000";
+            var res = await auth.ForgotPasswordAsync(model.Email!, frontendUrl, ct);
+            
+            if (res.Status == "Success")
+                return Ok(new { message = res.Message });
+            
+            return BadRequest(new { message = res.Message });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("reset-password")]
     [AllowAnonymous]
     public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordModel model, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(model.UserId) || string.IsNullOrWhiteSpace(model.Token) || string.IsNullOrWhiteSpace(model.NewPassword))
-            return BadRequest("Missing required fields");
+        try
+        {
+            if (string.IsNullOrWhiteSpace(model.UserId) || string.IsNullOrWhiteSpace(model.Token) || string.IsNullOrWhiteSpace(model.NewPassword))
+                return BadRequest(new { message = "Missing required fields" });
 
-        var res = await auth.ResetPasswordAsync(model.UserId, model.Token, model.NewPassword, ct);
-        return res.Status == "Success" ? Ok(res) : BadRequest(res);
+            var res = await auth.ResetPasswordAsync(model.UserId, model.Token, model.NewPassword, ct);
+            
+            if (res.Status == "Success")
+                return Ok(new { message = res.Message });
+            
+            return BadRequest(new { message = res.Message });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("change-password")]
     [Authorize] 
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordModel model, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(model.CurrentPassword) || string.IsNullOrWhiteSpace(model.NewPassword))
-            return BadRequest("Missing required fields");
+        try
+        {
+            if (string.IsNullOrWhiteSpace(model.CurrentPassword) || string.IsNullOrWhiteSpace(model.NewPassword))
+                return BadRequest(new { message = "Missing required fields" });
 
-        // Lấy userId từ JWT token
-        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (string.IsNullOrEmpty(userId))
-            return Unauthorized("Invalid token");
+            // Lấy userId từ JWT token
+            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return Unauthorized(new { message = "Invalid token" });
 
-        var res = await auth.ChangePasswordAsync(userId, model.CurrentPassword, model.NewPassword, ct);
-        return res.Status == "Success" ? Ok(res) : BadRequest(res);
+            var res = await auth.ChangePasswordAsync(userId, model.CurrentPassword, model.NewPassword, ct);
+            
+            if (res.Status == "Success")
+                return Ok(new { message = res.Message });
+            
+            return BadRequest(new { message = res.Message });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
 }

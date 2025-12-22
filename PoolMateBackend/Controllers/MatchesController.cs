@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Dtos.Tournament;
 using PoolMate.Api.Services;
 
@@ -7,20 +8,20 @@ namespace PoolMate.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
+[Authorize(Roles = UserRoles.ORGANIZER)]
 public class MatchesController : ControllerBase
 {
-    private readonly IBracketService _bracketService;
+    private readonly IMatchService _matchService;
 
-    public MatchesController(IBracketService bracketService)
-        => _bracketService = bracketService;
+    public MatchesController(IMatchService matchService)
+        => _matchService = matchService;
 
     [HttpPut("{id:int}")]
     public async Task<ActionResult<MatchDto>> Update(int id, [FromBody] UpdateMatchRequest request, CancellationToken ct)
     {
         try
         {
-            var result = await _bracketService.UpdateMatchAsync(id, request, ct);
+            var result = await _matchService.UpdateMatchAsync(id, request, ct);
             return Ok(result);
         }
         catch (KeyNotFoundException)
@@ -38,7 +39,7 @@ public class MatchesController : ControllerBase
     {
         try
         {
-            var result = await _bracketService.CorrectMatchResultAsync(id, request, ct);
+            var result = await _matchService.CorrectMatchResultAsync(id, request, ct);
             return Ok(result);
         }
         catch (KeyNotFoundException)

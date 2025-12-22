@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using PoolMate.Api.Models;
 
@@ -10,6 +11,7 @@ namespace PoolMate.Api.Data
 
         // DbSets
         public DbSet<Post> Posts { get; set; }
+        public DbSet<Organizer> Organizers { get; set; }
 
         public DbSet<Venue> Venues => Set<Venue>();
         public DbSet<Tournament> Tournaments => Set<Tournament>();
@@ -19,6 +21,33 @@ namespace PoolMate.Api.Data
         public DbSet<TournamentTable> TournamentTables => Set<TournamentTable>();
         public DbSet<TournamentStage> TournamentStages => Set<TournamentStage>();
         public DbSet<Match> Matches => Set<Match>();
+
+        // New method for auto-initialization of DB and schema
+        public void EnsureDatabaseCreated(string connectionString)
+        {
+            // 1. Extract database name
+            var builder = new SqlConnectionStringBuilder(connectionString);
+            string databaseName = builder.InitialCatalog;
+
+            // 2. Connect to 'master'
+            builder.InitialCatalog = "master";
+            string masterConnectionString = builder.ToString();
+
+            using (var connection = new SqlConnection(masterConnectionString))
+            {
+                connection.Open(); // Synchronous Open
+                                   // 3. Check and create DB
+
+                var checkDbCommand = $"IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = '{databaseName}') CREATE DATABASE [{databaseName}];";
+                using (var command = new SqlCommand(checkDbCommand, connection))
+                {
+                    command.ExecuteNonQuery(); // Synchronous Execute
+                }
+            }
+
+            // 4. Run EF Core Migrations synchronously
+            Database.Migrate(); // Synchronous Migrate
+        }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -35,6 +64,24 @@ namespace PoolMate.Api.Data
                       .HasForeignKey(e => e.UserId)
                       .OnDelete(DeleteBehavior.Cascade);
             });
+
+            // ===== Organizer =====
+            var org = builder.Entity<Organizer>();
+            org.Property(x => x.OrganizationName).HasMaxLength(200).IsRequired();
+            org.Property(x => x.Email).HasMaxLength(200).IsRequired();
+            org.Property(x => x.FacebookPageUrl).HasMaxLength(300);
+            
+            // One-to-One relationship with ApplicationUser
+            org.HasOne(x => x.User)
+               .WithMany()
+               .HasForeignKey(x => x.UserId)
+               .OnDelete(DeleteBehavior.Cascade);
+            
+            // Unique constraint: One user can only have one organizer profile
+            org.HasIndex(x => x.UserId).IsUnique();
+            
+            // Index for email search
+            org.HasIndex(x => x.Email);
 
             // ===== Venue =====
             var v = builder.Entity<Venue>();
@@ -54,6 +101,15 @@ namespace PoolMate.Api.Data
             pt.Property(x => x.Name).HasMaxLength(200).IsRequired();
             pt.Property(x => x.PercentJson).IsRequired();
             pt.HasIndex(x => new { x.MinPlayers, x.MaxPlayers, x.Places });
+            
+            // Configure relationship with Owner
+            pt.HasOne(x => x.OwnerUser)
+              .WithMany()
+              .HasForeignKey(x => x.OwnerUserId)
+              .OnDelete(DeleteBehavior.Cascade); // Delete Organizer -> Delete their templates
+              
+            // Index for faster lookups by owner
+            pt.HasIndex(x => x.OwnerUserId);
 
             // ===== Tournament =====
             var t = builder.Entity<Tournament>();
@@ -99,6 +155,7 @@ namespace PoolMate.Api.Data
             var pl = builder.Entity<Player>();
             pl.Property(x => x.Country).HasMaxLength(2);
             pl.HasIndex(x => x.FullName);
+            pl.HasIndex(x => x.Slug).IsUnique();
             pl.HasOne(x => x.User)
               .WithMany()
               .HasForeignKey(x => x.UserId)

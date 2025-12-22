@@ -1,4 +1,4 @@
-﻿﻿using CloudinaryDotNet;
+using CloudinaryDotNet;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -9,10 +9,14 @@ using PoolMate.Api.Hubs;
 using PoolMate.Api.Integrations.Cloudinary36;
 using PoolMate.Api.Integrations.Email;
 using PoolMate.Api.Integrations.FargoRate;
+using PoolMate.Api.Middleware;
 using PoolMate.Api.Models;
 using PoolMate.Api.Services;
 using System.Text;
 using System.Text.Json.Serialization;
+using PoolMate.Api.Dtos.Response;
+using System.Text.Json;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,26 +25,47 @@ if (builder.Environment.IsDevelopment())
     builder.Configuration.AddUserSecrets<Program>();
 }
 
+bool AllowDevOrigins(string? origin) => IsAllowedOrigin(origin, includeLocalhost: true);
+bool AllowProdOrigins(string? origin) => IsAllowedOrigin(origin, includeLocalhost: false);
+
+static bool IsAllowedOrigin(string? origin, bool includeLocalhost)
+{
+    if (string.IsNullOrWhiteSpace(origin))
+        return false;
+
+    if (includeLocalhost &&
+        (origin.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase) ||
+         origin.StartsWith("https://localhost", StringComparison.OrdinalIgnoreCase)))
+    {
+        return true;
+    }
+
+    if (origin.Equals("https://poolmate-fe.vercel.app", StringComparison.OrdinalIgnoreCase))
+        return true;
+
+    if (origin.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase))
+        return true;
+
+    return false;
+}
+
 // CORS Configuration
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("ReactPolicy", policy =>
     {
-        policy.WithOrigins(
-                "http://localhost:3000",      // React dev server
-                "http://localhost:3001",      // Alternative React port
-                "https://localhost:3000",     // HTTPS React dev
-                "https://localhost:3001"      // HTTPS alternative
-            )
+        policy
+            .SetIsOriginAllowed(AllowDevOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
     });
 
-    // Policy for production (thêm domain thật khi deploy)
+    // Policy for production
     options.AddPolicy("ProductionPolicy", policy =>
     {
-        policy.WithOrigins("https://your-production-domain.com")
+        policy
+            .SetIsOriginAllowed(AllowProdOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -60,6 +85,8 @@ builder.Services.AddSignalR();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "PoolMate.Api", Version = "v1" });
+
+    c.CustomSchemaIds(type => type.ToString());
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -93,51 +120,93 @@ builder.Services.AddDbContext<ApplicationDbContext>(opt =>
 
 // Identity 
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(opt =>
-{
-    opt.User.RequireUniqueEmail = true;
-    opt.Password.RequiredLength = 6;
-})
-.AddEntityFrameworkStores<ApplicationDbContext>()
-.AddDefaultTokenProviders();
+    {
+        opt.User.RequireUniqueEmail = true;
+        opt.Password.RequiredLength = 6;
+    })
+    .AddEntityFrameworkStores<ApplicationDbContext>()
+    .AddDefaultTokenProviders();
 
-// JWT Bearer
+// JWT Bearer Configuration
 var jwt = builder.Configuration.GetSection("JWT");
 builder.Services.AddAuthentication(o =>
-{
-    o.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    o.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(o =>
-{
-    o.TokenValidationParameters = new TokenValidationParameters
     {
-        ValidateIssuer = true,
-        ValidIssuer = jwt["ValidIssuer"],
-        ValidateAudience = true,
-        ValidAudience = jwt["ValidAudience"],
-        ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Secret"]!)),
-        ValidateLifetime = true,
-        ClockSkew = TimeSpan.Zero
-    };
-
-    // Allow token from query string for SignalR
-    o.Events = new JwtBearerEvents
+        o.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        o.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(o =>
     {
-        OnMessageReceived = context =>
+        o.TokenValidationParameters = new TokenValidationParameters
         {
-            var accessToken = context.Request.Query["access_token"];
-            var path = context.HttpContext.Request.Path;
-
-            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+            ValidateIssuer = true,
+            ValidIssuer = jwt["ValidIssuer"],
+            ValidateAudience = true,
+            ValidAudience = jwt["ValidAudience"],
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Secret"]!)),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero
+        };
+        
+        o.Events = new JwtBearerEvents
+        {
+            // --- XỬ LÝ TOKEN CHO SIGNALR (Được thêm vào từ Code 1) ---
+            OnMessageReceived = context =>
             {
-                context.Token = accessToken;
-            }
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
 
-            return Task.CompletedTask;
-        }
-    };
-});
+                // SignalR gửi token qua query string, cần gán thủ công vào context
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+
+                return Task.CompletedTask;
+            },
+            // ---------------------------------------------------------
+
+            // Kiểm tra user bị khóa (Lockout Check - Tính năng của Code 2)
+            OnTokenValidated = async context =>
+            {
+                var userManager = context.HttpContext.RequestServices
+                    .GetRequiredService<UserManager<ApplicationUser>>();
+                var userId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (!string.IsNullOrEmpty(userId))
+                {
+                    var user = await userManager.FindByIdAsync(userId);
+                    if (user == null ||
+                        (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow))
+                    {
+                        context.Fail("This account has been deactivated/locked.");
+                    }
+                }
+            },
+
+            //  401 Unauthorized 
+            OnChallenge = context =>
+            {
+                context.HandleResponse();
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.ContentType = "application/json";
+                var response =
+                    ApiResponse<object>.Fail(401, "Unauthorized: You are not logged in or token is invalid.");
+                var json = JsonSerializer.Serialize(response);
+                return context.Response.WriteAsync(json);
+            },
+
+            // 403 Forbidden
+            OnForbidden = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                context.Response.ContentType = "application/json";
+                var response = ApiResponse<object>.Fail(403,
+                    "Forbidden: You do not have permission to access this resource.");
+                var json = JsonSerializer.Serialize(response);
+                return context.Response.WriteAsync(json);
+            }
+        };
+    });
 
 //Email
 builder.Services.Configure<EmailSettings>(
@@ -159,24 +228,32 @@ builder.Services.AddHttpClient<IFargoRateService, FargoRateService>(client =>
 // Add Memory Cache
 builder.Services.AddMemoryCache();
 
+
+builder.Services.AddDistributedMemoryCache(); // Switch to AddStackExchangeRedisCache for production
+
+// Banned User Cache Service - Real-time ban checking
+builder.Services.AddScoped<IBannedUserCacheService, BannedUserCacheService>();
+
 builder.Services.Configure<TableTokenOptions>(builder.Configuration.GetSection(TableTokenOptions.SectionName));
 builder.Services.AddSingleton<IMatchLockService, MatchLockService>();
 builder.Services.AddScoped<ITableTokenService, TableTokenService>();
 
 // App services
 builder.Services.AddScoped<AuthService>();
-
 builder.Services.AddScoped<IPostService, PostService>();
-
 builder.Services.AddScoped<ITournamentService, TournamentService>();
-
+builder.Services.AddScoped<ITournamentPlayerService, TournamentPlayerService>();
+builder.Services.AddScoped<ITournamentTableService, TournamentTableService>();
 builder.Services.AddScoped<IVenueService, VenueService>();
-
 builder.Services.AddScoped<IAuthService, AuthService>();
-
 builder.Services.AddScoped<IBracketService, BracketService>();
-
+builder.Services.AddScoped<IMatchService, MatchService>();
 builder.Services.AddScoped<IAdminUserService, AdminUserService>();
+builder.Services.AddScoped<IAdminPlayerService, AdminPlayerService>();
+builder.Services.AddScoped<IPlayerProfileService, PlayerProfileService>();
+builder.Services.AddScoped<IPayoutService, PayoutService>(); 
+builder.Services.AddScoped<IOrganizerDashboardService, OrganizerDashboardService>();
+builder.Services.AddScoped<IOrganizerService, OrganizerService>();
 
 // Cloudinary
 builder.Services.AddSingleton(sp =>
@@ -195,10 +272,31 @@ builder.Services.Configure<CloudinaryOptions>(
 builder.Services.AddScoped<ICloudinaryService, CloudinaryService>();
 builder.Services.AddScoped<IProfileService, ProfileService>();
 
-// Dashboard Data Seeder (for testing)
-builder.Services.AddScoped<DashboardDataSeeder>();
 
 var app = builder.Build();
+
+// Auto-initialize database and schema
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var logger = services.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        var context = services.GetRequiredService<ApplicationDbContext>();
+        var connectionString = builder.Configuration.GetConnectionString("ConnStr");
+
+        logger.LogInformation("Starting database initialization...");
+        context.EnsureDatabaseCreated(connectionString!); // Synchronous call
+        logger.LogInformation("Database initialization finished successfully.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "An error occurred while initializing the database.");
+        // Consider if the app should fail fast here
+        // throw;
+    }
+}
 
 // Custom validation exception middleware: convert ValidationException to HTTP 400 JSON
 app.Use(async (context, next) =>
@@ -241,8 +339,15 @@ else
 }
 
 app.UseAuthentication();
+
+app.UseBannedUserCheck();
+
 app.UseAuthorization();
 
 app.MapControllers();
 app.MapHub<TournamentHub>("/hubs/tournament");
+app.MapHub<AppHub>("/hubs/app"); // Real-time notifications (logout commands, alerts)
 app.Run();
+
+// Required for WebApplicationFactory to access Program class in integration tests
+public partial class Program { }

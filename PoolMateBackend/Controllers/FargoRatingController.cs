@@ -1,5 +1,7 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using PoolMate.Api.Dtos.Auth;
 using PoolMate.Api.Integrations.FargoRate.Models;
 using PoolMate.Api.Integrations.FargoRate;
 
@@ -7,6 +9,7 @@ namespace PoolMate.Api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class FargoRatingController : ControllerBase
     {
         private readonly IFargoRateService _fargoRateService;
@@ -19,6 +22,7 @@ namespace PoolMate.Api.Controllers
         }
 
         [HttpPost("batch-search-fargo")]
+        [Authorize(Roles = UserRoles.ORGANIZER)]
         public async Task<ActionResult<List<PlayerFargoSearchResult>>> BatchSearchFargoRatings(
             [FromBody] List<BatchSearchRequest> requests)
         {
@@ -27,6 +31,7 @@ namespace PoolMate.Api.Controllers
         }
 
         [HttpPost("apply")]
+        [Authorize(Roles = UserRoles.ORGANIZER)]
         public async Task<ActionResult> ApplyFargoRatings(
         [FromBody] ApplyFargoRatingsDto dto)
         {

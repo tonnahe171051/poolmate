@@ -33,11 +33,18 @@ public class AuthService : IAuthService
     public async Task<(string Token, DateTime Exp, string UserId, string? UserName, string? Email, IList<string> Roles)?>
         LoginAsync(LoginModel model, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(model);
+        
         var username = model.Username?.Trim();
 
         var user = await _users.FindByNameAsync(username);
         if (user is null)
             throw new InvalidOperationException("Invalid username or password.");
+        
+        if (user.LockoutEnd.HasValue && user.LockoutEnd.Value > DateTimeOffset.UtcNow)
+        {
+            throw new InvalidOperationException("This account has been locked. Please contact administrator.");
+        }
 
         if (!await _users.CheckPasswordAsync(user, model.Password))
             throw new InvalidOperationException("Invalid username or password.");
@@ -51,6 +58,7 @@ public class AuthService : IAuthService
         {
             new(ClaimTypes.Name, user.UserName ?? string.Empty),
             new(ClaimTypes.NameIdentifier, user.Id),
+            new(ClaimTypes.Email, user.Email ?? string.Empty), 
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
         foreach (var r in userRoles) claims.Add(new Claim(ClaimTypes.Role, r));
@@ -94,30 +102,7 @@ public class AuthService : IAuthService
         var msg = string.Join("; ", result.Errors.Select(e => e.Description));
         return Response.Error(string.IsNullOrWhiteSpace(msg) ? "Invalid or expired token." : msg);
     }
-
-    public async Task<Response> RegisterAdminAsync(RegisterModel model, CancellationToken ct = default)
-    {
-        if (await _users.FindByNameAsync(model.Username) is not null)
-            return Response.Error("User already exists!");
-        var user = new ApplicationUser
-        {
-            UserName = model.Username,
-            Email = model.Email,
-            SecurityStamp = Guid.NewGuid().ToString(),
-            EmailConfirmed = true
-        };
-        var result = await _users.CreateAsync(user, model.Password);
-        if (!result.Succeeded)
-            return Response.Error(string.Join("; ", result.Errors.Select(e => e.Description)));
-
-        if (!await _roles.RoleExistsAsync(UserRoles.ADMIN))
-            await _roles.CreateAsync(new IdentityRole(UserRoles.ADMIN));
-
-        await _users.AddToRoleAsync(user, UserRoles.ADMIN);
-
-        return Response.Ok("Admin created successfully.");
-    }
-
+    
     // FORGOT PASSWORD - Send reset password email
     public async Task<Response> ForgotPasswordAsync(string email, string baseUri, CancellationToken ct = default)
     {
@@ -170,30 +155,30 @@ public class AuthService : IAuthService
 
         return Response.Ok("Password changed successfully");
     }
-
-
-
+    
     // ===== helper =====
 
-    private async Task SendPasswordResetEmailAsync(ApplicationUser user, string baseUri, CancellationToken ct)
+    private async Task SendPasswordResetEmailAsync(ApplicationUser user, string frontendBaseUrl, CancellationToken ct)
     {
         var token = await _users.GeneratePasswordResetTokenAsync(user);
         var tokenEncoded = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
-        var resetUrl = $"{baseUri}/api/auth/reset-password?userId={user.Id}&token={tokenEncoded}";
+        
+        var resetUrl = $"{frontendBaseUrl}/api/auth/reset-password?userId={user.Id}&token={tokenEncoded}";
 
         await _email.SendAsync(user.Email!, "Reset your password",
-            $"Hi {user.UserName},\nTo reset your password, please click: {resetUrl}", ct);
+            $"Hi {user.UserName},\n\nTo reset your password, please click the link below:\n{resetUrl}\n\nThis link will expire in 24 hours.\n\nIf you did not request this, please ignore this email.", ct);
     }
 
 
-    private async Task SendEmailConfirmationAsync(ApplicationUser u, string baseUri, CancellationToken ct)
+    private async Task SendEmailConfirmationAsync(ApplicationUser u, string frontendBaseUrl, CancellationToken ct)
     {
         var token = await _users.GenerateEmailConfirmationTokenAsync(u);
         var tokenEncoded = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
-        var confirmUrl = $"{baseUri}/api/auth/confirm-email?userId={u.Id}&token={tokenEncoded}";
+
+        var confirmUrl = $"{frontendBaseUrl}/api/auth/confirm-email?userId={u.Id}&token={tokenEncoded}";
 
         await _email.SendAsync(u.Email!, "Confirm your email",
-            $"Hi {u.UserName},\nPlease confirm by clicking: {confirmUrl}", ct);
+            $"Hi {u.UserName},\n\nWelcome to PoolMate! Please confirm your email by clicking the link below:\n{confirmUrl}\n\nThis link will expire in 24 hours.", ct);
     }
 
     private JwtSecurityToken BuildJwt(IEnumerable<Claim> claims)
