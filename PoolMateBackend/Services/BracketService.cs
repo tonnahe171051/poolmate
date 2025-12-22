@@ -529,6 +529,34 @@ namespace PoolMate.Api.Services
                 scheduledDisplay = match.ScheduledUtc.Value.ToString("MMM dd, HH:mm\\h");
             }
 
+            // build PlayerDto instances once so we can reuse them for projected labels
+            PlayerDto? p1 = match.Player1Tp != null ? new PlayerDto
+            {
+                TpId = match.Player1Tp.Id,
+                Name = match.Player1Tp.DisplayName,
+                Seed = match.Player1Tp.Seed,
+                Country = match.Player1Tp.Country,
+                FargoRating = match.Player1Tp.SkillLevel
+            } : null;
+
+            PlayerDto? p2 = match.Player2Tp != null ? new PlayerDto
+            {
+                TpId = match.Player2Tp.Id,
+                Name = match.Player2Tp.DisplayName,
+                Seed = match.Player2Tp.Seed,
+                Country = match.Player2Tp.Country,
+                FargoRating = match.Player2Tp.SkillLevel
+            } : null;
+
+            PlayerDto? winner = match.WinnerTp != null ? new PlayerDto
+            {
+                TpId = match.WinnerTp.Id,
+                Name = match.WinnerTp.DisplayName,
+                Seed = match.WinnerTp.Seed,
+                Country = match.WinnerTp.Country,
+                FargoRating = match.WinnerTp.SkillLevel
+            } : null;
+
             return new MatchDto
             {
                 Id = match.Id,
@@ -538,35 +566,18 @@ namespace PoolMate.Api.Services
                 Status = match.Status,
 
                 // ✅ Enhanced player data with country
-                Player1 = match.Player1Tp != null ? new PlayerDto
-                {
-                    TpId = match.Player1Tp.Id,
-                    Name = match.Player1Tp.DisplayName,
-                    Seed = match.Player1Tp.Seed,
-                    Country = match.Player1Tp.Country,
-                    FargoRating = match.Player1Tp.SkillLevel
-                } : null,
-                Player2 = match.Player2Tp != null ? new PlayerDto
-                {
-                    TpId = match.Player2Tp.Id,
-                    Name = match.Player2Tp.DisplayName,
-                    Seed = match.Player2Tp.Seed,
-                    Country = match.Player2Tp.Country,
-                    FargoRating = match.Player2Tp.SkillLevel
-                } : null,
-                Winner = match.WinnerTp != null ? new PlayerDto
-                {
-                    TpId = match.WinnerTp.Id,
-                    Name = match.WinnerTp.DisplayName,
-                    Seed = match.WinnerTp.Seed,
-                    Country = match.WinnerTp.Country,
-                    FargoRating = match.WinnerTp.SkillLevel
-                } : null,
+                Player1 = p1,
+                Player2 = p2,
+                Winner = winner,
 
                 Player1SourceType = match.Player1SourceType,
                 Player1SourceMatchId = match.Player1SourceMatchId,
                 Player2SourceType = match.Player2SourceType,
                 Player2SourceMatchId = match.Player2SourceMatchId,
+
+                // UI-friendly projected labels for empty/TBD slots
+                ProjectedPlayer1 = FormatSlotLabel(p1, match.Player1SourceType, match.Player1SourceMatchId),
+                ProjectedPlayer2 = FormatSlotLabel(p2, match.Player2SourceType, match.Player2SourceMatchId),
 
                 ScheduledUtc = match.ScheduledUtc,
                 ScheduledDisplay = scheduledDisplay,
@@ -1735,15 +1746,15 @@ namespace PoolMate.Api.Services
             }
             else
             {
+                //kiểm tra kích thước bracket có phải là lũy thừa của 2 không
                 if ((slots.Count & (slots.Count - 1)) != 0)
                     throw new InvalidOperationException("Double elimination bracket requires the bracket size to be a power of two.");
 
-                // Compute how many winners rounds we should keep.
-                // Option A: keep all winners rounds except the final winners round
-                // (i.e. fullDepth - 1). This yields winners progression like 8 -> 4 -> 2
-                // for a 16-slot bracket (fullDepth=4 => keep=3).
+                
                 int bracketSize = slots.Count;
                 var fullWBRounds = (int)Math.Log2(bracketSize);
+
+                //nếu là stage có advance count thì tính trim plan (cắt nhánh)
                 TrimPlan? trimPlan = stage.AdvanceCount.HasValue && stage.AdvanceCount.Value > 0
                     ? CalculateTrimPlan(bracketSize, stage.AdvanceCount.Value)
                     : null;
