@@ -492,3 +492,8 @@ appsettings.*.local.json
 *.user
 *.swp
 
+# Docker sensitive files
+docker-compose.yml
+docker-compose.*.yml
+.env
+
